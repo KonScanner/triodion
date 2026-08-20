@@ -465,7 +465,7 @@ pub(crate) fn print_triodion_conclusion(
         format!(
             "  {:>width$} / {} ({}%)",
             freeze_summary.errored.len().separate_with_commas(),
-            &n_chunks_str,
+            n_chunks_str,
             format_float((100 * freeze_summary.errored.len() / n_chunks) as f64),
             width = width
         ),

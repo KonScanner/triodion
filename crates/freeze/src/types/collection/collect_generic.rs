@@ -29,11 +29,7 @@ pub async fn fetch_partition<F, Fut, T>(
     sender: mpsc::Sender<Result<T, CollectError>>,
 ) -> Result<Vec<tokio::task::JoinHandle<Result<(), CollectError>>>, CollectError>
 where
-    F: Copy
-        + Send
-        + for<'a> Fn(Params, Arc<Source>, Arc<Query>) -> Fut
-        + std::marker::Sync
-        + 'static,
+    F: Copy + Send + Fn(Params, Arc<Source>, Arc<Query>) -> Fut + std::marker::Sync + 'static,
     Fut: Future<Output = Result<T, CollectError>> + Send + 'static,
     T: Send + 'static,
 {

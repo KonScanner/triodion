@@ -3,8 +3,8 @@ authors = ["sslivkoff"]
 language = "en"
 multilingual = false
 src = "book"
-title = "cryo"
-description = "field manual for cryo"
+title = "triodion"
+description = "field manual for triodion"
 
 [build]
 build-dir = "target/book"

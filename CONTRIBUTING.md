@@ -1,6 +1,6 @@
-## Contributing to cryo
+## Contributing to triodion
 
-Thanks for your interest in improving cryo!
+Thanks for your interest in improving triodion!
 
 There are multiple opportunities to contribute at any level. It doesn't matter if you are just getting started with python or are the most weathered expert, we can use your help.
 
@@ -13,7 +13,7 @@ If you contribute to this project, your contributions will be made to the projec
 
 ### Code of Conduct
 
-The cryo project adheres to the [Rust Code of Conduct][rust-coc]. This code of conduct describes the _minimum_ behavior expected from all contributors.
+The triodion project adheres to the [Rust Code of Conduct][rust-coc]. This code of conduct describes the _minimum_ behavior expected from all contributors.
 
 Instances of violations of the Code of Conduct can be reported by contacting the team at [storm@paradigm.xyz](mailto:storm@paradigm.xyz).
 
@@ -22,7 +22,7 @@ Instances of violations of the Code of Conduct can be reported by contacting the
 There are fundamentally three ways an individual can contribute:
 
 1. **By opening an issue:** For example, if you believe that you have uncovered a bug
-   in cryo, creating a new issue in the issue tracker is the way to report it.
+   in triodion, creating a new issue in the issue tracker is the way to report it.
 2. **By adding context:** Providing additional context to existing issues,
    such as screenshots and code snippets to help resolve issues.
 3. **By resolving issues:** Typically this is done in the form of either
@@ -49,7 +49,7 @@ If you believe that you have uncovered a bug, please fill out the form to the be
 
 The most important pieces of information we need in a bug report are:
 
--   The cryo version you are on (and that it is up to date)
+-   The triodion version you are on (and that it is up to date)
 -   The platform you are on (Windows, macOS, an M1 Mac or Linux)
 -   Code snippets if this is happening in relation to testing or building code
 -   Concrete steps to reproduce the bug
@@ -68,7 +68,7 @@ If you have examples of other tools that have the feature you are requesting, pl
 
 ### Resolving an issue
 
-Pull requests are the way concrete changes are made to the code, documentation, and dependencies of cryo.
+Pull requests are the way concrete changes are made to the code, documentation, and dependencies of triodion.
 
 Even tiny pull requests, like fixing wording, are greatly appreciated. Before making a large change, it is usually a good idea to first open an issue describing the change to solicit feedback and guidance. This will increase the likelihood of the PR getting merged.
 
@@ -78,8 +78,8 @@ If you are working on a larger feature, we encourage you to open up a draft pull
 
 #### Adding tests
 
-If the change being proposed alters code, it is either adding new functionality to cryo, or fixing existing, broken functionality.
-In both of these cases, the pull request should include one or more tests to ensure that cryo does not regress in the future.
+If the change being proposed alters code, it is either adding new functionality to triodion, or fixing existing, broken functionality.
+In both of these cases, the pull request should include one or more tests to ensure that triodion does not regress in the future.
 
 Types of tests include:
 
@@ -108,7 +108,7 @@ This is a big part of the submission process, so don't be discouraged! Some cont
 
 #### Reviewing pull requests
 
-**Any cryo community member is welcome to review any pull request**.
+**Any triodion community member is welcome to review any pull request**.
 
 All contributors who choose to review and provide feedback on pull requests have a responsibility to both the project and individual making the contribution. Reviews and feedback must be helpful, insightful, and geared towards improving the contribution as opposed to simply blocking it. If there are reasons why you feel the PR should not be merged, explain what those are. Do not expect to be able to block a PR from advancing simply because you say "no" without giving an explanation. Be open to having your mind changed. Be open to working _with_ the contributor to make the pull request better.
 
@@ -124,8 +124,8 @@ It is tempting to micro-optimize and make everything about relative performance,
 
 Focus first on the most significant aspects of the change:
 
-1. Does this change make sense for cryo?
-2. Does this change make cryo better, even if only incrementally?
+1. Does this change make sense for triodion?
+2. Does this change make triodion better, even if only incrementally?
 3. Are there clear bugs or larger scale issues that need attending?
 4. Are the commit messages readable and correct? If it contains a breaking change, is it clear enough?
 
@@ -135,7 +135,7 @@ When changes are necessary, _request_ them, do not _demand_ them, and **do not a
 
 Specific performance optimization techniques, coding styles and conventions change over time. The first impression you give to a new contributor never does.
 
-Nits (requests for small changes that are not essential) are fine, but try to avoid stalling the pull request. Most nits can typically be fixed by the cryo maintainers merging the pull request, but they can also be an opportunity for the contributor to learn a bit more about the project.
+Nits (requests for small changes that are not essential) are fine, but try to avoid stalling the pull request. Most nits can typically be fixed by the triodion maintainers merging the pull request, but they can also be an opportunity for the contributor to learn a bit more about the project.
 
 It is always good to clearly indicate nits when you comment, e.g.: `Nit: change foo() to bar(). But this is not blocking`.
 
@@ -143,7 +143,7 @@ If your comments were addressed but were not folded after new commits, or if the
 
 ##### Be aware of the person behind the code
 
-Be aware that _how_ you communicate requests and reviews in your feedback can have a significant impact on the success of the pull request. Yes, we may merge a particular change that makes cryo better, but the individual might just not want to have anything to do with cryo ever again. The goal is not just having good code.
+Be aware that _how_ you communicate requests and reviews in your feedback can have a significant impact on the success of the pull request. Yes, we may merge a particular change that makes triodion better, but the individual might just not want to have anything to do with triodion ever again. The goal is not just having good code.
 
 ##### Abandoned or stale pull requests
 

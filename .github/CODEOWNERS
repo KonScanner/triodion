@@ -1,0 +1,8 @@
+# Code owners for triodion.
+#
+# GitHub requests a review from these owners on every pull request that
+# changes a matching file. The `main` branch ruleset makes that review
+# mandatory before a merge.
+
+# Default owner for everything in the repository.
+* @KonScanner

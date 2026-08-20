@@ -1,9 +1,15 @@
 ---
 name: Question
-about: Please use the Telegram group for questions
+about: Ask a question about triodion
 title: ""
 labels: ""
 assignees: ""
 ---
 
-Please post your question as a discussion in Telegram: https://t.me/paradigm_data
+Write your question here.
+
+To help us answer, include:
+
+-   The `triodion` version you are on
+-   The command or python code you ran
+-   The chain and the RPC provider you used

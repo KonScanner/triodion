@@ -1,8 +1,5 @@
 # Additional Reading
 
-### RPC Information
-- [Ultimate tracing reference](https://github.com/paradigmxyz/ultimate_evm_tracing_reference)
-
 ### Cryo Tutorials
 
 These describe upstream `cryo`. triodion's CLI is invoked as `triodion`

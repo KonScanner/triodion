@@ -25,16 +25,18 @@ name = "triodion"
 path = "rust/lib.rs"
 crate-type = ["cdylib"]
 
-# pyo3 0.27 is the floor pinned by our transitive dep: pyo3-polars 0.26.0
-# requires `pyo3 ^0.27` (see https://crates.io/crates/pyo3-polars/0.26.0/dependencies).
-# Bumping pyo3 to 0.28 here would create a duplicate-pyo3-version graph
-# (Cargo would resolve both 0.27 and 0.28), which the pyo3 macros explicitly
-# reject at compile time with "found multiple versions of pyo3". Stay on
-# 0.27 until pyo3-polars publishes a 0.27 that requires `pyo3 ^0.28`.
+# pyo3 0.29 is the floor set by two advisories against 0.27:
+# RUSTSEC-2026-0176 (out-of-bounds read in `nth` / `nth_back` for `PyList`
+# and `PyTuple` iterators) and RUSTSEC-2026-0177 (missing `Sync` bound on
+# `PyCFunction::new_closure` closures). Both are patched in `>= 0.29.0`.
 #
-# pyo3 0.27 already supports Python 3.14 final (pyo3 CHANGELOG: 0.26.0 "Test
-# against Python 3.14 final release"; 0.27.x inherits). No source changes
-# were required for the 3.13 → 3.14 transition.
+# The stack moves as one unit: pyo3-polars 0.28.0 requires `pyo3 ^0.29` and
+# `polars ^0.55.1`, so polars is on 0.55 workspace-wide. A mixed graph is not
+# an option — the pyo3 macros reject it at compile time with "found multiple
+# versions of pyo3".
+#
+# pyo3 0.29 supports Python 3.14 final. No source changes were required for
+# the 3.13 -> 3.14 transition.
 #
 # abi3 (`pyo3/abi3-py310` etc.) is deliberately NOT enabled. Trade-offs per
 # https://pyo3.rs/v0.28.3/building-and-distribution.html#py_limited_api-abi3:
@@ -43,8 +45,8 @@ crate-type = ["cdylib"]
 #   - CON: pyo3 cannot use version-specific optimizations; some C-API
 #     features (buffer API < 3.11, text signatures on classes < 3.10, dict
 #     and weakref options < 3.9) are unavailable.
-#   - BLOCKER: pyo3-polars 0.26 does not advertise abi3 compatibility in
-#     its Cargo.toml, and its PyDataFrame internals depend on polars' own
+#   - BLOCKER: pyo3-polars does not advertise abi3 compatibility in its
+#     Cargo.toml, and its PyDataFrame internals depend on polars' own
 #     pyo3 usage — enabling abi3 here would need separate verification
 #     across all 3.10–3.14 wheels.
 # We ship a single Docker image with a single Python version. There is no
@@ -53,11 +55,11 @@ crate-type = ["cdylib"]
 [dependencies]
 triodion-cli        = { version = "0.4.0", path = "../cli" }
 triodion-core       = { version = "0.4.0", path = "../freeze" }
-polars              = { version = "0.53", features = ["parquet", "string_encoding", "lazy", "binary_encoding", "json", "dtype-struct"] }
-pyo3                = { version = "0.27", features = ["extension-module"] }
-pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
-pyo3-polars         = "0.26"
+polars              = { version = "0.55", features = ["parquet", "string_encoding", "lazy", "binary_encoding", "json", "dtype-struct"] }
+pyo3                = { version = "0.29", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+pyo3-polars         = "0.28"
 tokio               = { version = "1.52", features = ["macros", "rt-multi-thread", "sync"] }
 
 [build-dependencies]
-pyo3-build-config = "0.27"
+pyo3-build-config = "0.29"

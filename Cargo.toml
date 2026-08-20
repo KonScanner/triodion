@@ -38,10 +38,29 @@ alloy = { version = "2.0.5", features = [
     "transport-ipc-mock",
 ] }
 anstyle = "1.0.14"
-# chrono is capped at 0.4.41: polars-arrow 0.53 requires chrono's `std`
-# feature, which 0.4.42 removed (it became default-on with no opt-out). Lift
-# this cap together with polars 0.54+.
-chrono = { version = "0.4.41", features = ["serde"] }
+# The 0.4.41 cap is lifted. It existed because polars-arrow 0.53 required
+# chrono's `std` feature, which 0.4.42 removed (it became default-on with no
+# opt-out). polars-arrow 0.55 no longer asks for it, so chrono resolves to
+# 0.4.45 and the workspace builds clean.
+chrono = { version = "0.4", features = ["serde"] }
+# clap_cryo carries a known-unsound transitive dependency and there is no
+# in-place fix: clap_builder_cryo requires `anstream ^0.3`, and the
+# RUSTSEC-2024-0404 fix for `anstream::adapter::strip_str` first shipped in
+# `anstream 0.6.8`. No 0.3.x release carries it. Dropping the `color` feature
+# does not help either — Cargo.lock is resolved feature-independently, so the
+# `anstream` entry (and the alert) stays.
+#
+# The only real fix is to leave the fork for upstream clap, and that is not
+# free. clap_builder_cryo's sole delta over clap_builder 4.3.21 is
+# `is_number_range()`: it lets an arg with `allow_negative_numbers` accept
+# `-1000:-500` and `-1000:latest` as VALUES rather than flags. Upstream clap
+# 4.6 rejects both ("unexpected argument '-1' found"), and its
+# `allow_hyphen_values` alternative is greedy — it swallows the next real flag
+# (`-b -1000:latest --align` puts `--align` into `blocks`). Migrating needs an
+# argv normalisation pass in front of the parser, which is separate work.
+#
+# Blast radius meanwhile: `strip_str` mis-segments a specific UTF-8 + ANSI
+# escape byte sequence. It runs only when clap strips colour from help text.
 clap_cryo = { version = "4.3.21-cryo", features = [
     "derive",
     "color",
@@ -67,7 +86,16 @@ indicatif = "0.18.4"
 # in transitively by colored/color-print). LazyLock (std, since 1.80) is the
 # modern replacement if we ever need one in our own code.
 mesc = "0.1.4"
-polars = { version = "0.53", features = [
+# polars 0.55 is the floor set by pyo3-polars 0.28 (see the pyo3 note below).
+#
+# Known open advisory below this pin: polars-error 0.55 requires
+# `object_store ^0.13`, and object_store 0.13.2 requires `quick-xml ^0.39`,
+# which carries RUSTSEC-2026-0194 and RUSTSEC-2026-0195 (both denial of
+# service). object_store 0.14.1 moved to the patched `quick-xml ^0.41`, so the
+# fix arrives when polars bumps object_store. We cannot force it from here.
+# Reach: the XML paths are cloud object-store responses (S3, Azure). triodion
+# writes local files, so nothing in our own code drives them.
+polars = { version = "0.55", features = [
     "parquet",
     "string_encoding",
     "lazy",
@@ -75,23 +103,25 @@ polars = { version = "0.53", features = [
     "json",
     "dtype-struct",
 ] }
-# polars-io 0.53 stopped re-exporting GzipLevel/BrotliLevel/ZstdLevel; we
-# import them directly from polars-parquet to preserve user-controlled
-# compression levels in the CLI.
-polars-parquet = "0.53"
+# polars-io stopped re-exporting GzipLevel/BrotliLevel/ZstdLevel; we import
+# them directly from polars-parquet to preserve user-controlled compression
+# levels in the CLI.
+polars-parquet = "0.55"
 prefix-hex = "0.7.1"
-# pyo3 stays on 0.27: pyo3-polars 0.26.0 requires `pyo3 ^0.27`. Bumping to
-# 0.28 here yields a duplicate-pyo3 graph that the pyo3 macros reject at
-# compile time. Revisit when pyo3-polars publishes a release that targets
-# `pyo3 ^0.28`. See crates/python/Cargo.toml for the full rationale.
+# pyo3 0.29 is the floor set by RUSTSEC-2026-0176 (out-of-bounds read in
+# `nth` / `nth_back` for `PyList` / `PyTuple` iterators) and RUSTSEC-2026-0177
+# (missing `Sync` bound on `PyCFunction::new_closure`). Both are patched in
+# `>= 0.29.0`. pyo3-polars 0.28.0 requires `pyo3 ^0.29` and `polars ^0.55.1`,
+# so the whole stack moves together — a mixed graph makes the pyo3 macros
+# fail at compile time with "found multiple versions of pyo3".
 #
 # NB: `extension-module` is set per-crate in crates/python/Cargo.toml only.
 # Enabling it workspace-wide propagates via Cargo's feature unification and
 # breaks the standalone `triodion` binary (link errors for PyErr_* symbols).
-pyo3 = "0.27"
-pyo3-build-config = "0.27"
-pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
-pyo3-polars = "0.26"
+pyo3 = "0.29"
+pyo3-build-config = "0.29"
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+pyo3-polars = "0.28"
 # rand stays on 0.8.x: 0.9 removed `thread_rng` (renamed `rng`) and rebuilt
 # the `SeedableRng`/`SliceRandom` traits, which `crates/cli/src/parse/partitions.rs`
 # uses. Bumping is a small mechanical refactor — separate work item.

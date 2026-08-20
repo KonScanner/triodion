@@ -88,7 +88,7 @@ fn read_integer_column(path: &str, column: &str) -> Result<Vec<u64>, ParseError>
 
     match series.u32() {
         Ok(ca) => ca
-            .into_iter()
+            .iter()
             .map(|v| {
                 v.ok_or_else(|| ParseError::ParseError("timestamp missing".to_string()))
                     .map(|data| data.into())
@@ -96,7 +96,7 @@ fn read_integer_column(path: &str, column: &str) -> Result<Vec<u64>, ParseError>
             .collect(),
         Err(_e) => match series.u64() {
             Ok(ca) => ca
-                .into_iter()
+                .iter()
                 .map(|v| v.ok_or_else(|| ParseError::ParseError("timestamp missing".to_string())))
                 .collect(),
             Err(_e) => {
@@ -513,5 +513,35 @@ mod tests {
             ),
             (18573050, 18573051)
         );
+    }
+
+    /// Write `column` to a parquet file and read it back through
+    /// `read_integer_column`. This covers the polars 0.55 change where
+    /// `&ChunkedArray<UInt32Type>` and `&ChunkedArray<UInt64Type>` stopped
+    /// implementing `IntoIterator`.
+    fn read_integer_column_helper(name: &str, column: Column) {
+        let path = std::env::temp_dir().join(format!("triodion_{}.parquet", name));
+        let mut df = DataFrame::new(3, vec![column]).unwrap();
+
+        let file = std::fs::File::create(&path).unwrap();
+        ParquetWriter::new(file).finish(&mut df).unwrap();
+
+        let mut read = read_integer_column(path.to_str().unwrap(), "number").unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        read.sort_unstable();
+        assert_eq!(read, vec![10u64, 20, 30]);
+    }
+
+    #[test]
+    fn read_integer_column_reads_u32() {
+        let column = Column::new("number".into(), vec![10u32, 20, 30]);
+        read_integer_column_helper("timestamps_u32", column);
+    }
+
+    #[test]
+    fn read_integer_column_reads_u64() {
+        let column = Column::new("number".into(), vec![10u64, 20, 30]);
+        read_integer_column_helper("timestamps_u64", column);
     }
 }

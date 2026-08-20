@@ -15,7 +15,7 @@ If you contribute to this project, your contributions will be made to the projec
 
 The triodion project adheres to the [Rust Code of Conduct][rust-coc]. This code of conduct describes the _minimum_ behavior expected from all contributors.
 
-Instances of violations of the Code of Conduct can be reported by contacting the team at [storm@paradigm.xyz](mailto:storm@paradigm.xyz).
+Instances of violations of the Code of Conduct can be reported by contacting the team at [kowalskidefi@proton.me](mailto:kowalskidefi@proton.me).
 
 ### Ways to contribute
 

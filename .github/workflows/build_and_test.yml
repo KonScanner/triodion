@@ -51,4 +51,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      # `+nightly` is required, not decorative. rustfmt.toml sets five
+      # nightly-only options (wrap_comments, comment_width,
+      # imports_granularity, binop_separator, trailing_semicolon), and the
+      # root rust-toolchain.toml pins channel = "stable". rustup's directory
+      # override beats the toolchain this action installs, so a bare
+      # `cargo fmt` runs STABLE rustfmt here, silently ignores all five
+      # options, and then fails on the resulting disagreement.
+      - run: cargo +nightly fmt --all --check

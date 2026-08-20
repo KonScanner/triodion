@@ -14,3 +14,8 @@ graveyard
 .idea
 flamegraph.svg
 test.sh
+
+# Claude Code session transcripts. Kept locally for reference, never committed:
+# they contain excerpts of the PRIVATE KonScanner/cdc-homie repo, the
+# maintainer's email address, and absolute home paths. This repo is public.
+.claude-chats/

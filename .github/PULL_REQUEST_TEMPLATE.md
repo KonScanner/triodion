@@ -1,32 +1,22 @@
-<!--
-Thank you for your Pull Request. Please provide a description above and review
-the requirements below.
+## Overview
 
-Bug fixes and new features should include tests.
+<!-- What does this change do? One or two sentences. -->
+
+## Reasoning
+
+<!-- Why is the change needed, and why this approach? Link the issue if there is one. -->
+
+## Tests
+
+<!-- Which tests cover this change? Give the commands you ran, and their result. -->
+
+<!--
+Before you open the pull request, run:
+
+    cargo build --workspace
+    cargo test --workspace
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo +nightly fmt --all
 
 Contributors guide: https://github.com/KonScanner/triodion/blob/main/CONTRIBUTING.md
-
-The contributors guide includes instructions for running ruff and building the
-documentation.
 -->
-
-## Motivation
-
-<!--
-Explain the context and why you're making that change. What is the problem
-you're trying to solve? In some cases there is not a problem and this can be
-thought of as being the motivation for your change.
--->
-
-## Solution
-
-<!--
-Summarize the solution and provide any necessary context needed to understand
-the code change.
--->
-
-## PR Checklist
-
--   [ ] Added Tests
--   [ ] Added Documentation
--   [ ] Breaking changes

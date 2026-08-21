@@ -1,6 +1,6 @@
 use crate::*;
 use alloy::{
-    primitives::{Address, Bytes, U256},
+    primitives::{Bytes, U256},
     sol_types::SolCall,
 };
 use polars::prelude::*;
@@ -77,8 +77,8 @@ impl CollectByTransaction for Erc20Balances {
 
 impl MulticallBatchable for Erc20Balances {
     fn calls_for_row(params: &Params, require_success: bool) -> R<Vec<Multicall3::Call3>> {
-        let owner = Address::from_slice(&params.address()?);
-        let contract = Address::from_slice(&params.contract()?);
+        let owner = params.ethers_address()?;
+        let contract = params.ethers_contract()?;
         let call_data = ERC20::balanceOfCall { owner }.abi_encode();
         Ok(vec![Multicall3::Call3 {
             target: contract,

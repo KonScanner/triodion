@@ -1,6 +1,10 @@
 use crate::*;
-use alloy::primitives::Address;
+use alloy::{
+    eips::BlockNumberOrTag,
+    primitives::{Address, Bytes},
+};
 use polars::prelude::*;
+use std::collections::HashMap;
 
 /// columns for codes
 ///
@@ -69,10 +73,69 @@ impl CollectByBlock for Codes {
         let schema = query.schemas.get_schema(&Datatype::Codes)?;
         process_code(columns, response, schema)
     }
+
+    async fn collect_by_block(
+        partition: Partition,
+        source: Arc<Source>,
+        query: Arc<Query>,
+        inner_request_size: Option<u64>,
+    ) -> R<HashMap<Datatype, DataFrame>> {
+        if query.batch_rpc_calls {
+            rpc_batch_collect_by_block::<Self>(partition, source, query, inner_request_size).await
+        } else {
+            default_collect_by_block::<Self>(partition, source, query, inner_request_size).await
+        }
+    }
 }
 
 impl CollectByTransaction for Codes {
     type Response = ();
+}
+
+/// Whole bytecode batches at the transport, not through an extractor.
+///
+/// An `EXTCODESIZE` / `EXTCODEHASH` extractor batches beautifully — one word
+/// out per address in, exactly like the balance reader — but this dataset's
+/// `code` column wants the bytes themselves, and returning those needs
+/// `EXTCODECOPY` into memory with a length-prefixed layout. That costs quadratic
+/// memory expansion and a hand-written variable-stride loop, to move payload
+/// that is bandwidth-bound rather than round-trip-bound: the bytes have to cross
+/// the wire either way, and a hundred contracts' code is a large response
+/// however it is requested.
+///
+/// JSON-RPC batching gets the request-count win — a hundred `eth_getCode` calls
+/// in one HTTP body — for four lines and no new failure modes. That is the right
+/// trade here. `rows_per_request` is lowered to 50 because these responses are
+/// far larger than a 32-byte word.
+impl RpcBatchable for Codes {
+    type Param = (Address, BlockNumberOrTag);
+    type Item = Bytes;
+
+    fn method() -> &'static str {
+        "eth_getCode"
+    }
+
+    fn param_for_row(params: &Params) -> R<Self::Param> {
+        // `ethers_address`, never `Address::from_slice`, which PANICS on a width
+        // mismatch — and `--address` is hex-decoded with no length check, so
+        // `--address 0xdead` arrives here as two bytes. This runs once per row
+        // of a whole chunk, so a panic would abort fifty rows where the per-row
+        // path aborted one. As an error the chunk simply demotes, and the
+        // per-row path reports that address exactly as it did before batching
+        // existed.
+        Ok((params.ethers_address()?, BlockNumberOrTag::Number(params.block_number()?)))
+    }
+
+    fn decode_row(params: &Params, item: Self::Item) -> R<Self::Response> {
+        Ok((params.block_number()? as u32, None, params.address()?, item.to_vec()))
+    }
+
+    fn default_rpc_batch_rows() -> usize {
+        // A contract can be 24 KB (EIP-170), so a hundred of them is a 2.4 MB
+        // response body. Fifty keeps the worst case inside the request-size
+        // limits providers actually enforce.
+        50
+    }
 }
 
 fn process_code(columns: &mut Codes, data: BlockTxAddressOutput, schema: &Table) -> R<()> {

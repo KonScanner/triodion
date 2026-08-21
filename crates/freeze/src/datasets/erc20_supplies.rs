@@ -1,6 +1,6 @@
 use crate::*;
 use alloy::{
-    primitives::{Address, Bytes, U256},
+    primitives::{Bytes, U256},
     sol_types::SolCall,
 };
 use polars::prelude::*;
@@ -88,7 +88,7 @@ impl CollectByTransaction for Erc20Supplies {
 
 impl MulticallBatchable for Erc20Supplies {
     fn calls_for_row(params: &Params, require_success: bool) -> R<Vec<Multicall3::Call3>> {
-        let target = Address::from_slice(&params.address()?);
+        let target = params.ethers_address()?;
         // totalSupply() takes no args; emit just the selector. (The legacy
         // per-call path above concatenates the address to the calldata —
         // harmless because extra calldata is ignored, but the batched path
@@ -136,6 +136,8 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            state_override_support: Arc::new(Default::default()),
+            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             beacon: None,
         })
     }
@@ -162,6 +164,9 @@ mod tests {
             multicall: false,
             multicall_batch_size: 0,
             multicall_require_success: false,
+            batch_state_reads: false,
+            batch_rpc_calls: false,
+            state_override_batch_size: 0,
         })
     }
 

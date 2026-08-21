@@ -1,6 +1,10 @@
 use crate::*;
-use alloy::primitives::Address;
+use alloy::{
+    eips::BlockNumberOrTag,
+    primitives::{Address, U64},
+};
 use polars::prelude::*;
+use std::collections::HashMap;
 
 /// columns for balances
 #[triodion_macros::to_df(Datatype::Nonces)]
@@ -45,10 +49,56 @@ impl CollectByBlock for Nonces {
         let schema = query.schemas.get_schema(&Datatype::Nonces)?;
         process_nonce(columns, response, schema)
     }
+
+    async fn collect_by_block(
+        partition: Partition,
+        source: Arc<Source>,
+        query: Arc<Query>,
+        inner_request_size: Option<u64>,
+    ) -> R<HashMap<Datatype, DataFrame>> {
+        if query.batch_rpc_calls {
+            rpc_batch_collect_by_block::<Self>(partition, source, query, inner_request_size).await
+        } else {
+            default_collect_by_block::<Self>(partition, source, query, inner_request_size).await
+        }
+    }
 }
 
 impl CollectByTransaction for Nonces {
     type Response = ();
+}
+
+/// Nonces batch at the transport and nowhere else.
+///
+/// This is the one account field the state-override trick cannot reach. The EVM
+/// exposes an account's balance (`BALANCE`), its code (`EXTCODESIZE`,
+/// `EXTCODEHASH`, `EXTCODECOPY`) and — from inside it — its storage (`SLOAD`),
+/// but there is no opcode that reads another account's nonce. No injected
+/// bytecode batches this, on any node, at any block. `eth_getProof` returns a
+/// nonce, but one account per call, so it buys nothing here either.
+///
+/// So the only lever is JSON-RPC batching: same request count reduction, no
+/// requirements on the node beyond JSON-RPC itself.
+impl RpcBatchable for Nonces {
+    type Param = (Address, BlockNumberOrTag);
+    type Item = U64;
+
+    fn method() -> &'static str {
+        "eth_getTransactionCount"
+    }
+
+    fn param_for_row(params: &Params) -> R<Self::Param> {
+        // `ethers_address`, never `Address::from_slice`, which PANICS on a width
+        // mismatch — and `--address` is hex-decoded with no length check. This
+        // runs once per row of a whole chunk, so a panic would abort a hundred
+        // rows where the per-row path aborted one. As an error the chunk demotes
+        // and the per-row path reports that address as it always did.
+        Ok((params.ethers_address()?, BlockNumberOrTag::Number(params.block_number()?)))
+    }
+
+    fn decode_row(params: &Params, item: Self::Item) -> R<Self::Response> {
+        Ok((params.block_number()? as u32, None, params.address()?, item.to::<u64>()))
+    }
 }
 
 fn process_nonce(columns: &mut Nonces, data: BlockTxAddressOutput, schema: &Table) -> R<()> {

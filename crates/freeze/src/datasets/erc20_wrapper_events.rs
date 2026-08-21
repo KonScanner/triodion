@@ -1,4 +1,7 @@
-use crate::{types::rpc_params::fixed_from_slice, *};
+use crate::{
+    types::rpc_params::{fixed_from_slice, log_address_matches, topic_matches},
+    *,
+};
 use alloy::{
     primitives::{B256, U256},
     rpc::types::{Filter, Log, Topic},
@@ -112,7 +115,20 @@ impl CollectByTransaction for Erc20WrapperEvents {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let logs = source.get_transaction_logs(request.transaction_hash()?).await?;
-        Ok(logs.into_iter().filter(is_wrapper_event).collect())
+        // The dims never reach the node on this path: `--txs` asks for one
+        // transaction's whole receipt, so the narrowing the by-block path pins
+        // into the `eth_getLogs` filter has to be re-applied here. Without it a
+        // dim is accepted, counted into the partition set, printed in the run
+        // summary, and then ignored — the run returns rows it was asked to
+        // exclude and says nothing.
+        Ok(logs
+            .into_iter()
+            .filter(|log| {
+                is_wrapper_event(log) &&
+                    log_address_matches(log, &request.address) &&
+                    topic_matches(log, 1, &request.topic1)
+            })
+            .collect())
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

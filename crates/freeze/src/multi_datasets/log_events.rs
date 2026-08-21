@@ -62,7 +62,10 @@ use crate::{
         erc20_approvals::is_erc20_approval, erc20_transfers::is_erc20_transfer,
         erc20_wrapper_events::is_wrapper_event, erc721_transfers::is_erc721_transfer,
     },
-    types::{collection::*, rpc_params::fixed_from_slice},
+    types::{
+        collection::*,
+        rpc_params::{address_topic_matches, fixed_from_slice, topic_matches},
+    },
     *,
 };
 use alloy::{
@@ -238,35 +241,6 @@ fn narrow_agreed_topics(topics: &mut [Topic; 4], request: &Params, active: &Hash
         let Some(Some(first)) = pinned.next() else { continue };
         if pinned.all(|t| t == Some(first)) {
             *slot = first.into();
-        }
-    }
-}
-
-/// True iff `log`'s topic at `idx` equals `want` (`None` ⇒ unconstrained).
-///
-/// For the `--topic0..3` dims only, where the scalar path compares the user's
-/// bytes to a topic verbatim. A non-32-byte value cannot equal any topic and so
-/// matches nothing here — but it never reaches this point, because
-/// `build_union_filter`'s `request.ethers_log_filter()?` already rejected it.
-fn topic_matches(log: &Log, idx: usize, want: &Option<Vec<u8>>) -> bool {
-    match want {
-        None => true,
-        Some(bytes) => log.topics().get(idx).is_some_and(|t| t.as_slice() == bytes.as_slice()),
-    }
-}
-
-/// Like [`topic_matches`], but for the address-shaped dims (`--from-address`,
-/// `--to-address`), which the CLI stores at whatever width the user typed.
-///
-/// Compares against the left-padded 32-byte form, which is exactly what the
-/// scalar extractors put into their RPC filter via [`address_dim_as_topic`]. A
-/// value wider than 32 bytes matches nothing; the scalar path errors on the same
-/// input, so neither returns rows.
-fn address_topic_matches(log: &Log, idx: usize, want: &Option<Vec<u8>>) -> bool {
-    match want {
-        None => true,
-        Some(bytes) => {
-            address_dim_as_topic(bytes).is_some_and(|t| log.topics().get(idx) == Some(&t))
         }
     }
 }
@@ -489,6 +463,9 @@ mod tests {
             multicall: false,
             multicall_batch_size: 0,
             multicall_require_success: false,
+            batch_state_reads: false,
+            batch_rpc_calls: false,
+            state_override_batch_size: 0,
         })
     }
 

@@ -48,6 +48,12 @@ pub mod signatures;
 /// Multicall3 helpers
 pub mod multicall;
 
+/// bulk state reads via `eth_call` state overrides
+pub mod state_override;
+
+/// many identical JSON-RPC calls per HTTP request
+pub mod rpc_batch;
+
 /// error specifications
 pub mod errors;
 /// type specifications for output data formats
@@ -76,8 +82,13 @@ pub use dataframes::*;
 pub use datatypes::*;
 pub use files::{ColumnEncoding, FileFormat, FileOutput, SubDir};
 pub use queries::{Query, QueryLabels, TimeDimension};
+pub use rpc_batch::{rpc_batch_collect_by_block, RpcBatchable, DEFAULT_RPC_BATCH_ROWS};
 pub use schemas::{ColumnType, SchemaFunctions, Schemas, Table, U256Type};
 pub use sources::{Fetcher, RateLimiter, Source, SourceLabels};
+pub use state_override::{
+    override_unavailable, state_override_collect_by_block, OverrideSupport, StateOverrideBatchable,
+    StateReader, DEFAULT_STATE_OVERRIDE_BATCH_SIZE, SCRATCH_ADDRESS,
+};
 // pub(crate) use summaries::FreezeSummaryAgg;
 // pub use summaries::{FreezeChunkSummary, FreezeSummary};
 pub use summaries::{print_all_datasets, print_dataset_info, FreezeSummary};

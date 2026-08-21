@@ -176,6 +176,41 @@ pub enum CallOutcome {
     NodeFailed,
 }
 
+/// JSON-RPC error code EIP-1474 reserves for `execution reverted`.
+const EXECUTION_REVERTED_CODE: i64 = 3;
+
+/// Lowercase fragments of the EVM's own execution-failure messages.
+///
+/// Every one of these is the EVM refusing to finish running *the contract*, so
+/// the node did its job and the address has no answer to give. That is a
+/// [`CallOutcome::ContractRefused`], and a null is the honest cell for it.
+///
+/// Taken from geth's `vm.Err*` set, which reth and erigon reproduce and which
+/// providers pass through. The list was four fragments and covered a third of
+/// that set; the rest were being classified as node failures and were failing
+/// whole chunks. `contract_interfaces` is the most exposed dataset, because it
+/// aims `eth_call` at arbitrary addresses holding arbitrary bytecode.
+///
+/// Anything not listed here still defaults to [`CallOutcome::NodeFailed`]. That
+/// direction is the safe one: an unrecognised error surfaces loudly instead of
+/// being laundered into a null.
+const EVM_FAILURE_MESSAGES: &[&str] = &[
+    "revert",
+    "invalid opcode",
+    "invalid jump",
+    "out of gas",
+    "stack underflow",
+    "stack limit reached",
+    "return data out of bounds",
+    "max call depth exceeded",
+    "gas uint64 overflow",
+    "nonce uint64 overflow",
+    "write protection",
+    "invalid code",
+    "max code size exceeded",
+    "contract address collision",
+];
+
 impl CollectError {
     /// Classify this error as a contract-level refusal or a node-level failure.
     ///
@@ -195,15 +230,22 @@ impl CollectError {
             return CallOutcome::NodeFailed
         }
 
-        // Geth, reth, erigon, nethermind and every provider that proxies them
-        // report contract-level failures through the message, not the code
-        // (the code is an un-namespaced -32000 on most of them). Matching on
-        // the message is unlovely but it is the only portable signal.
+        // EIP-1474 reserves code 3 for "execution reverted", and geth uses it
+        // for exactly that, carrying the revert blob in `data`. It is the one
+        // structured signal available here, so it is checked before the
+        // message: a provider that rewords the message still sets the code.
+        if payload.code == EXECUTION_REVERTED_CODE {
+            return CallOutcome::ContractRefused
+        }
+
+        // Otherwise the message is the only portable signal. Geth, reth,
+        // erigon, nethermind and every provider that proxies them report
+        // contract-level failures through it, not the code (which is an
+        // un-namespaced -32000 on most of them). Matching on a message is
+        // unlovely, but there is nothing else to match on.
         let message = payload.message.to_ascii_lowercase();
-        let contract_refused = message.contains("revert") ||
-            message.contains("invalid opcode") ||
-            message.contains("out of gas") ||
-            message.contains("invalid jump");
+        let contract_refused =
+            EVM_FAILURE_MESSAGES.iter().any(|fragment| message.contains(fragment));
 
         if contract_refused {
             CallOutcome::ContractRefused
@@ -273,6 +315,42 @@ mod tests {
             error_resp(-32000, "invalid opcode: INVALID").call_outcome(),
             CallOutcome::ContractRefused
         );
+    }
+
+    #[test]
+    fn the_reserved_revert_code_is_enough_on_its_own() {
+        // EIP-1474 reserves 3 for execution-reverted. A provider that rewords
+        // the message still sets the code, so the code is checked first.
+        assert_eq!(
+            error_resp(3, "VM execution error.").call_outcome(),
+            CallOutcome::ContractRefused
+        );
+    }
+
+    #[test]
+    fn every_evm_execution_failure_is_a_contract_refusal() {
+        // The EVM refusing to finish running the contract, in geth's own
+        // wording. Each of these used to be classified as a node failure and
+        // failed the whole chunk instead of writing one null row. They arrive
+        // under -32000, so only the message distinguishes them.
+        for message in [
+            "stack underflow (0 <=> 2)",
+            "stack limit reached 1024 (1024)",
+            "return data out of bounds",
+            "max call depth exceeded",
+            "gas uint64 overflow",
+            "nonce uint64 overflow",
+            "write protection",
+            "invalid code: must not begin with 0xef",
+            "max code size exceeded",
+            "contract address collision",
+        ] {
+            assert_eq!(
+                error_resp(-32000, message).call_outcome(),
+                CallOutcome::ContractRefused,
+                "{message}"
+            );
+        }
     }
 
     #[test]

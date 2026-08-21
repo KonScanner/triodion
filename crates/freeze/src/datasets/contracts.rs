@@ -95,11 +95,81 @@ pub(crate) fn process_contracts(
             store!(schema, columns, factory, create.from.to_vec());
             store!(schema, columns, init_code, create.init.to_vec());
             store!(schema, columns, code, result.code.to_vec());
-            store!(schema, columns, init_code_hash, keccak256(result.code.clone()).to_vec());
-            store!(schema, columns, code_hash, keccak256(create.init.clone()).to_vec());
+            // Each column held the *other* column's hash. `code_hash` is the
+            // usual join key for contract identity, so every match against an
+            // `EXTCODEHASH` or an external codehash index silently found
+            // nothing rather than erroring.
+            store!(schema, columns, init_code_hash, keccak256(create.init.clone()).to_vec());
+            store!(schema, columns, code_hash, keccak256(result.code.clone()).to_vec());
             store!(schema, columns, n_init_code_bytes, create.init.len() as u32);
             store!(schema, columns, n_code_bytes, result.code.len() as u32);
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// A `create` whose init code and deployed code differ, so a transposition
+    /// of the two hash columns cannot pass unnoticed.
+    fn create_trace() -> LocalizedTransactionTrace {
+        serde_json::from_value(serde_json::json!({
+            "action": {
+                "from": "0x1111111111111111111111111111111111111111",
+                "gas": "0x100000",
+                "init": "0xdeadbeef",
+                "value": "0x0"
+            },
+            "blockHash":
+                "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "blockNumber": 1,
+            "result": {
+                "address": "0x3333333333333333333333333333333333333333",
+                "code": "0xc0ffee",
+                "gasUsed": "0x1000"
+            },
+            "subtraces": 0,
+            "traceAddress": [],
+            "transactionHash":
+                "0x4444444444444444444444444444444444444444444444444444444444444444",
+            "transactionPosition": 0,
+            "type": "create"
+        }))
+        .expect("create trace fixture deserializes")
+    }
+
+    fn schemas() -> Schemas {
+        let columns: Vec<String> =
+            Datatype::Contracts.column_types().keys().map(|name| name.to_string()).collect();
+        let schema = Datatype::Contracts
+            .table_schema(
+                &[U256Type::String],
+                &ColumnEncoding::Hex,
+                &None,
+                &None,
+                &Some(columns),
+                None,
+                None,
+            )
+            .expect("every column is nameable");
+        HashMap::from([(Datatype::Contracts, schema)])
+    }
+
+    #[test]
+    fn each_hash_column_hashes_its_own_column() {
+        let mut columns = Contracts::default();
+        process_contracts(&[create_trace()], &mut columns, &schemas())
+            .expect("one create trace yields one row");
+
+        assert_eq!(columns.init_code, vec![vec![0xde, 0xad, 0xbe, 0xef]]);
+        assert_eq!(columns.code, vec![vec![0xc0, 0xff, 0xee]]);
+        // These two were transposed: `init_code_hash` held keccak(code) and
+        // `code_hash` held keccak(init_code), so `code_hash` matched no
+        // `EXTCODEHASH` anywhere.
+        assert_eq!(columns.init_code_hash, vec![keccak256([0xde, 0xad, 0xbe, 0xef]).to_vec()]);
+        assert_eq!(columns.code_hash, vec![keccak256([0xc0, 0xff, 0xee]).to_vec()]);
+    }
 }

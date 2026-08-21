@@ -14,6 +14,7 @@ authority when the two disagree.
 | --- | --- | --- |
 | [access_lists](./access_lists.md) | | EIP-2930 access-list entries, one row per storage key |
 | [address_appearances](./address_appearances.md) | | every address that appears in a block, with the relationship that made it appear |
+| [approvals_for_all](./approvals_for_all.md) | `erc721_approvals_for_all`, `erc1155_approvals` | `ApprovalForAll` events, which ERC-721 and ERC-1155 share |
 | [authorizations](./authorizations.md) | | EIP-7702 authorization tuples, with the recovered authority |
 | [balance_diffs](./balance_diffs.md) | | ETH balance changes, as before and after values |
 | [balance_reads](./balance_reads.md) | | ETH balances read during execution |
@@ -24,16 +25,24 @@ authority when the two disagree.
 | [code_reads](./code_reads.md) | | contract code read during execution |
 | [codes](./codes.md) | | contract code at a block |
 | [consolidation_requests](./consolidation_requests.md) | | EIP-7251 consolidation requests, from the consensus layer |
+| [contract_interfaces](./contract_interfaces.md) | `erc165` | what a contract answers to ERC-165 `supportsInterface` |
 | [contracts](./contracts.md) | | contracts deployed, with deployer, factory and init code |
 | [deposit_requests](./deposit_requests.md) | | EIP-6110 deposit requests, from the consensus layer |
+| [erc1155_metadata](./erc1155_metadata.md) | `erc1155_uris` | ERC-1155 `URI` events, with the `{id}` template flagged |
+| [erc1155_transfers](./erc1155_transfers.md) |  | ERC-1155 transfers, one row per token id moved |
+| [erc20_allowances](./erc20_allowances.md) | `allowances` | ERC-20 allowance of a spender over an owner's tokens at a block |
 | [erc20_balances](./erc20_balances.md) | | ERC-20 balance of an address at a block |
 | [erc20_metadata](./erc20_metadata.md) | | ERC-20 name, symbol and decimals |
 | [erc20_supplies](./erc20_supplies.md) | | ERC-20 total supply at a block |
 | [erc20_transfers](./erc20_transfers.md) | | ERC-20 `Transfer` events |
 | [erc20_approvals](./erc20_approvals.md) | | ERC-20 `Approval` events |
 | [erc20_wrapper_events](./erc20_wrapper_events.md) | `wrapper_events`, `weth_events` | WETH-shape `Deposit` and `Withdrawal` events |
+| [erc2612_nonces](./erc2612_nonces.md) |  | ERC-2612 permit nonce for a token and owner |
+| [erc4626_metadata](./erc4626_metadata.md) |  | ERC-4626 vault asset, total assets and share supply |
+| [erc4626_vault_events](./erc4626_vault_events.md) | `erc4626_events` | ERC-4626 vault `Deposit` and `Withdraw` events |
 | [erc721_metadata](./erc721_metadata.md) | | ERC-721 name and symbol |
 | [erc721_transfers](./erc721_transfers.md) | | ERC-721 `Transfer` events, with token id |
+| [erc777_transfers](./erc777_transfers.md) |  | ERC-777 `Sent`, `Minted` and `Burned` events, with the operator |
 | [eth_calls](./eth_calls.md) | | `eth_call` outputs for a contract and call data at each block |
 | [four_byte_counts](./four_byte_counts.md) | `4byte_counts` | count of each four-byte function selector called |
 | [geth_calls](./geth_calls.md) | | call traces from geth's `callTracer` |
@@ -48,6 +57,8 @@ authority when the two disagree.
 | [nonce_diffs](./nonce_diffs.md) | | nonce changes, as before and after values |
 | [nonce_reads](./nonce_reads.md) | | nonces read during execution |
 | [nonces](./nonces.md) | | nonce of an address at a block |
+| [proxy_slots](./proxy_slots.md) | `erc1967_slots` | ERC-1967 proxy implementation, admin and beacon slots |
+| [proxy_upgrades](./proxy_upgrades.md) | `erc1967_events` | ERC-1967 proxy `Upgraded`, `BeaconUpgraded` and `AdminChanged` events |
 | [slots](./slots.md) | `storages` | value of a storage slot at a block |
 | [storage_diffs](./storage_diffs.md) | `slot_diffs` | storage slot changes, as before and after values |
 | [storage_reads](./storage_reads.md) | `slot_reads` | storage slots read during execution |

@@ -356,7 +356,7 @@ where
 /// Anything else — pruned state, an unsupported method, an auth rejection, a
 /// rate limit — is a property of the request, not of its length, and halving
 /// only multiplies the failed requests.
-fn batch_may_shrink_to_fit(error: &CollectError) -> bool {
+pub(crate) fn batch_may_shrink_to_fit(error: &CollectError) -> bool {
     let CollectError::ProviderError(rpc_err) = error else {
         // Not a provider failure at all (a decode mismatch, a short result
         // slice): a smaller batch is worth one attempt, matching the previous
@@ -429,9 +429,20 @@ where
 
             Err(e) if current.len() > 1 => return Err(e),
 
+            // `--multicall-require-success` asks for the whole batch to fail
+            // when any inner call reverts, and the arm above honours that for
+            // batches of two or more. A singleton must fail the same way.
+            // Demoting it to `D::extract` would not: `extract` folds a
+            // contract-level refusal into a null by design, so the flag became
+            // a silent no-op on exactly the shape that produces singletons —
+            // rows are grouped by block above, so one address over a block
+            // range gives one row per group and *every* batch is a singleton.
+            Err(e) if require_success => return Err(e),
+
             Err(_) => {
-                // Singleton batch failed. Fall through to the per-call path so
-                // the row is decoded by the dataset's own `extract` — which now
+                // Singleton batch failed, and the caller did not ask for
+                // batch-level strictness. Fall through to the per-call path so
+                // the row is decoded by the dataset's own `extract` — which
                 // classifies the failure itself: a contract-level refusal
                 // becomes a null, a node-level failure propagates.
                 let p = current.into_iter().next().expect("len checked above");

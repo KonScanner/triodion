@@ -463,6 +463,7 @@ triodion datasets
 ─────────────────
 - access_lists
 - address_appearances
+- approvals_for_all (aliases = erc721_approvals_for_all, erc1155_approvals)
 - authorizations
 - balance_diffs
 - balance_reads
@@ -473,16 +474,24 @@ triodion datasets
 - code_reads
 - codes
 - consolidation_requests
+- contract_interfaces (alias = erc165)
 - contracts
 - deposit_requests
+- erc1155_metadata (alias = erc1155_uris)
+- erc1155_transfers
+- erc20_allowances (alias = allowances)
 - erc20_balances
 - erc20_metadata
 - erc20_supplies
 - erc20_transfers
 - erc20_approvals
 - erc20_wrapper_events (aliases = wrapper_events, weth_events)
+- erc2612_nonces
+- erc4626_metadata
+- erc4626_vault_events (alias = erc4626_events)
 - erc721_metadata
 - erc721_transfers
+- erc777_transfers
 - eth_calls
 - four_byte_counts (alias = 4byte_counts)
 - geth_calls
@@ -497,6 +506,8 @@ triodion datasets
 - nonce_diffs
 - nonce_reads
 - nonces
+- proxy_slots (alias = erc1967_slots)
+- proxy_upgrades (alias = erc1967_events)
 - slots (alias = storages)
 - storage_diffs (alias = slot_diffs)
 - storage_reads (alias = slot_reads)

@@ -334,11 +334,16 @@ mod tests {
     use super::*;
     use triodion_core::SourceLabels;
 
-    async fn setup_source() -> Source {
-        let rpc_url = match crate::parse::source::parse_rpc_url(&Args::default()) {
-            Ok(url) => url,
-            Err(_) => std::process::exit(0),
-        };
+    /// Build a live `Source`, or `None` when no RPC endpoint is configured.
+    ///
+    /// This used to `std::process::exit(0)` when `ETH_RPC_URL` was unset. That
+    /// does not skip the test — it terminates the whole test binary mid-run,
+    /// with a success status. `cargo test` then printed "running 15 tests",
+    /// never printed a `test result:` line, and exited 0, so CI reported green
+    /// while all 15 triodion-cli tests — including the 10 that need no RPC at
+    /// all — silently never ran.
+    async fn setup_source() -> Option<Source> {
+        let rpc_url = crate::parse::source::parse_rpc_url(&Args::default()).ok()?;
         let max_retry = 5;
         let initial_backoff = 500;
         let compute_units_per_second = 50;
@@ -359,7 +364,7 @@ mod tests {
         let rate_limiter = Some(RateLimiter::direct(quota));
         let semaphore = tokio::sync::Semaphore::new(max_concurrent_requests as usize);
 
-        Source {
+        Some(Source {
             provider,
             semaphore: Arc::new(Some(semaphore)),
             rate_limiter: Arc::new(rate_limiter),
@@ -371,13 +376,37 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
-        }
+        })
+    }
+
+    /// Skip the calling test (returning from it) when no RPC is configured.
+    ///
+    /// Prints the reason so a skipped run is visible in `cargo test -- --nocapture`
+    /// rather than looking like a pass.
+    macro_rules! source_or_skip {
+        () => {
+            match setup_source().await {
+                Some(source) => Arc::new(source),
+                None => {
+                    eprintln!("skipping {}: no RPC configured (set ETH_RPC_URL)", function_name!());
+                    return
+                }
+            }
+        };
+    }
+
+    /// Name of the enclosing test, for the skip message.
+    macro_rules! function_name {
+        () => {{
+            fn f() {}
+            let name = std::any::type_name_of_val(&f);
+            name.strip_suffix("::f").unwrap_or(name)
+        }};
     }
 
     #[tokio::test]
     async fn test_extrema_timestamp_to_block_number() {
-        let source = setup_source().await;
-        let source = Arc::new(source);
+        let source = source_or_skip!();
 
         // Before genesis block
         assert!(timestamp_to_block_number(1438260000, source).await.unwrap() == 0);
@@ -385,8 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_latest_timestamp_to_block_number() {
-        let source = setup_source().await;
-        let source = Arc::new(source);
+        let source = source_or_skip!();
         let latest_block_number = get_latest_block_number(source.clone()).await.unwrap();
         let latest_block = source
             .get_block(latest_block_number, BlockTransactionsKind::Hashes)
@@ -403,8 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timestamp_between_blocks() {
-        let source = setup_source().await;
-        let source = Arc::new(source);
+        let source = source_or_skip!();
 
         // Block 1000, and the timestamp surrounding block 1020
         assert!(timestamp_to_block_number(1438272177, source.clone()).await.unwrap() == 1020);
@@ -425,8 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_timestamp_number() {
-        let source = setup_source().await;
-        let source = Arc::new(source);
+        let source = source_or_skip!();
         let latest_timestamp =
             parse_timestamp_number("latest", RangePosition::None, source.clone()).await.unwrap();
         assert_eq!(latest_timestamp, get_latest_timestamp(source.clone()).await.unwrap());
@@ -481,8 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_timestamp_range_to_block_number_range() {
-        let source = setup_source().await;
-        let source = Arc::new(source);
+        let source = source_or_skip!();
 
         let (start_timestamp, end_timestamp) =
             parse_timestamp_range("1700000000", "1700000015", source.clone()).await.unwrap();

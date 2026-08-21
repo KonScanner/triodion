@@ -305,14 +305,29 @@ async fn parse_block_range(
         }
     };
 
+    // The range end is exclusive in this branch, so it is decremented to an
+    // inclusive bound. `end_block - 1` was unchecked: `-b 0:0` panicked with
+    // "attempt to subtract with overflow" in debug, and — because the workspace
+    // sets no `[profile.release]`, so `overflow-checks` is off — wrapped to
+    // `u64::MAX` in release, turning `-b 5:0` into a request for every block
+    // from 5 to the end of the u64 range. The `end_block < start_block` guard
+    // downstream never fired, because the wrap happened first.
     let end_block =
         if second_ref != "latest" && !second_ref.is_empty() && !first_ref.starts_with('-') {
-            end_block - 1
+            end_block.checked_sub(1).ok_or_else(|| {
+                ParseError::ParseError("end_block should not be less than start_block".to_string())
+            })?
         } else {
             end_block
         };
 
-    let start_block = if first_ref.starts_with('-') { start_block + 1 } else { start_block };
+    let start_block = if first_ref.starts_with('-') {
+        start_block
+            .checked_add(1)
+            .ok_or_else(|| ParseError::ParseError("start_block overflows u64".to_string()))?
+    } else {
+        start_block
+    };
 
     Ok((start_block, end_block))
 }
@@ -392,12 +407,15 @@ pub(crate) async fn get_latest_block_number(source: Arc<Source>) -> Result<u64, 
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
-    use alloy::{
-        providers::{IpcConnect, ProviderBuilder},
-        transports::ipc::MockIpcServer,
-    };
+    // `MockIpcServer` cannot serve these tests: its `spawn` *connects* to the
+    // path rather than listening on it, and `new()` hands out a plain
+    // `NamedTempFile`, so `connect_ipc` always failed with ConnectionRefused.
+    // These three tests had been dead for exactly that reason — invisibly,
+    // because a `process::exit(0)` elsewhere in the crate killed the harness
+    // before they were reported. `Asserter` is alloy's supported mock: a FIFO
+    // queue of canned responses behind a real provider.
+    use alloy::{providers::ProviderBuilder, transports::mock::Asserter};
 
     use super::*;
 
@@ -407,12 +425,8 @@ mod tests {
         WithMock((&'a str, BlockChunk, u64)), // Token | Expected | Mock Block Response
     }
 
-    async fn block_token_test_helper(
-        tests: Vec<(BlockTokenTest<'_>, bool)>,
-        mock_ipc_path: PathBuf,
-    ) {
-        let ipc = IpcConnect::new(mock_ipc_path);
-        let provider = ProviderBuilder::default().connect_ipc(ipc).await.unwrap();
+    async fn block_token_test_helper(tests: Vec<(BlockTokenTest<'_>, bool)>, asserter: Asserter) {
+        let provider = ProviderBuilder::default().connect_mocked_client(asserter);
         let source = Source {
             provider,
             semaphore: Arc::new(None),
@@ -476,12 +490,8 @@ mod tests {
         WithMock((&'a String, Vec<BlockChunk>, u64)), // Token | Expected | Mock Block Response
     }
 
-    async fn block_input_test_helper(
-        tests: Vec<(BlockInputTest<'_>, bool)>,
-        mock_ipc_path: PathBuf,
-    ) {
-        let ipc = IpcConnect::new(mock_ipc_path);
-        let provider = ProviderBuilder::default().connect_ipc(ipc).await.unwrap();
+    async fn block_input_test_helper(tests: Vec<(BlockInputTest<'_>, bool)>, asserter: Asserter) {
+        let provider = ProviderBuilder::default().connect_mocked_client(asserter);
         let source = Arc::new(Source {
             provider,
             chain_id: 1,
@@ -556,12 +566,8 @@ mod tests {
         WithMock((&'a str, RangePosition, u64, u64)),
     }
 
-    async fn block_number_test_helper(
-        tests: Vec<(BlockNumberTest<'_>, bool)>,
-        mock_ipc_path: PathBuf,
-    ) {
-        let provider =
-            ProviderBuilder::default().connect_ipc(IpcConnect::new(mock_ipc_path)).await.unwrap();
+    async fn block_number_test_helper(tests: Vec<(BlockNumberTest<'_>, bool)>, asserter: Asserter) {
+        let provider = ProviderBuilder::default().connect_mocked_client(asserter);
         let source = Source {
             provider,
             semaphore: Arc::new(None),
@@ -630,18 +636,16 @@ mod tests {
             // Number type
             (BlockTokenTest::WithoutMock((r"1", BlockChunk::Numbers(vec![1]))), true), /* Single block */
         ];
-        let mut mock_server = MockIpcServer::new();
-        let mock_ipc_path = mock_server.path().clone();
+        let asserter = Asserter::new();
         for (test, _) in tests.clone().into_iter() {
             match test {
                 BlockTokenTest::WithoutMock(_) => {}
                 BlockTokenTest::WithMock((_, _, mock_response)) => {
-                    mock_server.add_reply(mock_response)
+                    asserter.push_success(&mock_response)
                 }
             }
         }
-        mock_server.spawn().await;
-        block_token_test_helper(tests, mock_ipc_path).await;
+        block_token_test_helper(tests, asserter).await;
     }
 
     #[tokio::test]
@@ -685,16 +689,14 @@ mod tests {
                 true,
             ), // Multi input complex
         ];
-        let mut mock_server = MockIpcServer::new();
-        let mock_ipc_path = mock_server.path().clone();
+        let asserter = Asserter::new();
         for (test, _) in tests.clone() {
             match test {
-                BlockInputTest::WithMock((_, _, expected)) => mock_server.add_reply(expected),
+                BlockInputTest::WithMock((_, _, expected)) => asserter.push_success(&expected),
                 BlockInputTest::WithoutMock(_) => {}
             }
         }
-        mock_server.spawn().await;
-        block_input_test_helper(tests, mock_ipc_path).await;
+        block_input_test_helper(tests, asserter).await;
     }
 
     #[tokio::test]
@@ -712,16 +714,14 @@ mod tests {
             (BlockNumberTest::WithoutMock((r"1m", RangePosition::None, 1000000)), true), // m
             (BlockNumberTest::WithoutMock((r"1k", RangePosition::None, 1000)), true), // k
         ];
-        let mut mock_server = MockIpcServer::new();
-        let mock_ipc_path = mock_server.path().clone();
+        let asserter = Asserter::new();
         for (test, _) in tests.clone() {
             match test {
-                BlockNumberTest::WithMock((_, _, _, expected)) => mock_server.add_reply(expected),
+                BlockNumberTest::WithMock((_, _, _, expected)) => asserter.push_success(&expected),
                 BlockNumberTest::WithoutMock(_) => {}
             }
         }
-        mock_server.spawn().await;
-        block_number_test_helper(tests, mock_ipc_path).await;
+        block_number_test_helper(tests, asserter).await;
     }
 
     /// Write `column` to a parquet file and read it back through

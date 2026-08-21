@@ -1,5 +1,4 @@
 use crate::{args, parse, remember};
-use clap_cryo::Parser;
 use color_print::cstr;
 use colored::Colorize;
 use std::{sync::Arc, time::SystemTime};
@@ -94,7 +93,22 @@ fn handle_help_subcommands(args: args::Args) -> Result<Option<FreezeSummary>, Co
 
 /// Print general help for the CLI tool.
 fn print_general_help() {
-    args::Args::parse_from(vec!["triodion", "-h"]);
+    // Do NOT route this through `Args::parse_from(["triodion", "-h"])`. clap
+    // handles `-h` by printing help and then calling `std::process::exit(0)`
+    // itself. At the command line that is invisible — exiting after help is
+    // what the user wants — but it terminates *any* caller, and the three
+    // `handle_help_subcommands` tests call this function directly. The exit
+    // killed the test binary mid-run with a success status, so `cargo test`
+    // printed "running 15 tests", never printed a `test result:` line, and
+    // still exited 0. CI read that as green.
+    //
+    // Rendering the help through `CommandFactory` produces the same output and
+    // returns normally.
+    let mut command = <args::Args as clap_cryo::CommandFactory>::command();
+    if let Err(e) = command.print_help() {
+        eprintln!("could not print help: {e}");
+    }
+    println!();
 }
 
 /// Print syntax help for block and transaction specification.

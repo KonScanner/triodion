@@ -335,8 +335,12 @@ impl Source {
         max_concurrent_requests: Option<u64>,
         requests_per_second: Option<u64>,
     ) -> Result<Source> {
-        let rpc_url: String = parse_rpc_url(rpc_url);
-        let parsed_rpc_url: Url = rpc_url.parse().expect("rpc url is not valid");
+        let rpc_url: String = parse_rpc_url(rpc_url)?;
+        // A malformed `--rpc` is user input, not an invariant: report it rather
+        // than aborting mid-run.
+        let parsed_rpc_url: Url = rpc_url
+            .parse()
+            .map_err(|e| CollectError::CollectError(format!("invalid rpc url {rpc_url:?}: {e}")))?;
         let provider: RootProvider =
             ProviderBuilder::default().connect_http(parsed_rpc_url.clone());
         let chain_id = provider
@@ -403,12 +407,13 @@ impl Source {
     /// path, so an aggressive L1 RPC will spend permits from the same pool.
     ///
     /// # Errors
-    /// Returns [`CollectError::RPCError`] if the L1 chain id cannot be fetched.
-    ///
-    /// # Panics
-    /// Panics on an unparseable `l1_rpc_url`.
+    /// Returns [`CollectError::CollectError`] if `l1_rpc_url` cannot be parsed,
+    /// or [`CollectError::RPCError`] if the L1 chain id cannot be fetched.
     pub async fn with_l1_rpc(mut self, l1_rpc_url: String) -> Result<Source> {
-        let parsed: Url = l1_rpc_url.parse().expect("l1 rpc url is not valid");
+        // `--l1-rpc` is user input; a typo must be an error, not an abort.
+        let parsed: Url = l1_rpc_url.parse().map_err(|e| {
+            CollectError::CollectError(format!("invalid l1 rpc url {l1_rpc_url:?}: {e}"))
+        })?;
         let provider: RootProvider = ProviderBuilder::default().connect_http(parsed);
         let chain_id = provider
             .get_chain_id()
@@ -436,21 +441,27 @@ impl Source {
     }
 }
 
-fn parse_rpc_url(rpc_url: Option<String>) -> String {
+/// Resolve the RPC endpoint from the explicit argument or `ETH_RPC_URL`.
+///
+/// # Errors
+/// Errors when neither is set.
+///
+/// This used to `println!` and `std::process::exit(0)`. A library must never
+/// terminate its host: it took down the `cargo test` harness mid-run (with a
+/// *success* status, so CI stayed green) and would kill any embedder of
+/// `triodion_core`. The caller already returns `Result`, so the failure now
+/// travels the normal path.
+fn parse_rpc_url(rpc_url: Option<String>) -> Result<String> {
     let mut url = match rpc_url {
-        Some(url) => url.clone(),
-        _ => match std::env::var("ETH_RPC_URL") {
-            Ok(url) => url,
-            Err(_e) => {
-                println!("must provide --rpc or set ETH_RPC_URL");
-                std::process::exit(0);
-            }
-        },
+        Some(url) => url,
+        None => std::env::var("ETH_RPC_URL").map_err(|_| {
+            CollectError::CollectError("must provide --rpc or set ETH_RPC_URL".to_string())
+        })?,
     };
     if !url.starts_with("http") {
         url = "http://".to_string() + url.as_str();
     };
-    url
+    Ok(url)
 }
 
 // builder

@@ -2,9 +2,14 @@
 
 # This is an example of collecting most of the triodion datasets
 #
-# `blobs` is deliberately absent: it reads the consensus layer and needs
-# --beacon-rpc, so it would fail for anyone who runs this script without a
-# beacon node. See examples/blobs.sh instead.
+# Four datasets are deliberately absent, because they read the consensus layer
+# and would fail for anyone running this script without a beacon node:
+# `blobs`, `deposit_requests`, `withdrawal_requests` and
+# `consolidation_requests`. See examples/blobs.sh and examples/staking.sh.
+#
+# `withdrawals` IS here. It looks like a beacon dataset and is not: EIP-4895
+# withdrawals sit in the execution block body, so an ordinary RPC url serves
+# them.
 
 #
 # # parameters
@@ -28,7 +33,15 @@ OUTPUT_DIR="data"       # output directory
 # # datasets
 #
 
+# EIP-2930 access-list entries, one row per storage key. An entry naming an
+# account and no keys still gets a row, with a null storage_key.
+$EXECUTABLE access_lists -b $BLOCKS -o $OUTPUT_DIR/access_lists
+
 $EXECUTABLE address_appearances -b $BLOCKS -o $OUTPUT_DIR/address_appearances
+
+# EIP-7702 authorization tuples. Only type-0x04 transactions carry them, so a
+# pre-Prague range yields no rows.
+$EXECUTABLE authorizations -b $BLOCKS -o $OUTPUT_DIR/authorizations
 
 $EXECUTABLE balance_diffs -b $BLOCKS -o $OUTPUT_DIR/balance_diffs
 
@@ -90,6 +103,11 @@ $EXECUTABLE transactions -b $BLOCKS -o $OUTPUT_DIR/transactions
 
 # one row per executed opcode, so use the smaller range. Alias: opcode_traces
 $EXECUTABLE vm_traces -b $SMALL_BLOCKS -o $OUTPUT_DIR/vm_traces
+
+# EIP-4895 validator withdrawals, one row each. `blocks` carries only a count
+# and a sum, and an aggregate cannot be taken apart again. amount_gwei is gwei,
+# not wei -- the column name says so because the mistake is silent.
+$EXECUTABLE withdrawals -b $BLOCKS -o $OUTPUT_DIR/withdrawals
 
 
 #

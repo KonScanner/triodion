@@ -80,9 +80,15 @@ block. That should not happen. It is reported rather than hidden.
 `--blob-archive default` resolves to the public Blobscan API at
 `https://api.blobscan.com`.
 
-`--beacon-rpc` is always required, including on the archive path: the consensus
-source is only built when a beacon URL is given, and the slot clock is read
-from that node.
+Either flag alone is enough to enable the dataset. `--blob-archive` works on
+its own, because an archive is keyed by execution block number and reports each
+blob's slot itself, so it needs no slot clock. Such a run has no clock at all
+though: `epoch` is null, and `slot` is whatever the archive says. With neither
+flag the dataset errors rather than assume mainnet's timing.
+
+The EIP-7685 request datasets are stricter: they read beacon *blocks*, which no
+archive serves, so they require `--beacon-rpc`. See
+[deposit_requests](./deposit_requests.md).
 
 ## The retention window
 

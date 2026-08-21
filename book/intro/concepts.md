@@ -158,5 +158,29 @@ It has one limitation. A missed slot produces no execution block, so a run
 driven by `--blocks` cannot see one. Every slot that a block-indexed run
 reports is a slot that was actually filled.
 
+Five datasets sit on this boundary, and they do not all sit on the same side
+of it:
+
+| dataset | source | needs |
+| :- | :- | :- |
+| [blobs](../datasets/blobs.md) | consensus | `--beacon-rpc` or `--blob-archive` |
+| [deposit_requests](../datasets/deposit_requests.md) | consensus | `--beacon-rpc` |
+| [withdrawal_requests](../datasets/withdrawal_requests.md) | consensus | `--beacon-rpc` |
+| [consolidation_requests](../datasets/consolidation_requests.md) | consensus | `--beacon-rpc` |
+| [withdrawals](../datasets/withdrawals.md) | execution | an RPC url |
+
+The last one is the surprise. EIP-4895 withdrawals are credited by the
+consensus layer but delivered in the execution block body, so reading them
+needs no beacon node at all.
+
+The three request datasets exist because EIP-7685 commits to execution requests
+in the header, as `requests_hash`, and puts the requests themselves nowhere an
+execution node will serve them. A commitment cannot be turned back into what it
+commits to, so the consensus block is the only source.
+
+Retention differs between the two kinds. Blob sidecars are pruned after about
+eighteen days. Beacon *blocks* are not, so the request datasets need no archive
+and have none.
+
 See [Data Sources](./data_sources.md#the-consensus-layer) for the beacon
 endpoint, the blob archive, and the retention window behind them.

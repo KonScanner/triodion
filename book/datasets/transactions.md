@@ -157,6 +157,10 @@ column reports null instead.
 Both are null for a legacy transaction, which has no access list, and `0` for
 a typed transaction that carries an empty one. The null carries information.
 
+These are counts, and a count cannot say which accounts or slots were named.
+For the entries themselves, use [access_lists](./access_lists.md), which
+explodes each list to one row per storage key.
+
 ### EIP-4844 (Cancun): blobs
 
 | column | meaning |
@@ -175,6 +179,12 @@ key the [blobs](./blobs.md) dataset uses.
 
 `n_authorizations`, the number of authorization tuples in a set-code
 transaction. Null for every other type.
+
+Again a count only. [authorizations](./authorizations.md) emits one row per
+tuple, with the delegate address and the authority recovered from the
+signature. The state those authorizations produce — what an account currently
+delegates to — is in [codes](./codes.md), under `is_delegated` and
+`delegate_address`.
 
 ### OP stack
 

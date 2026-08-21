@@ -12,7 +12,9 @@ authority when the two disagree.
 
 | dataset | aliases | description |
 | --- | --- | --- |
+| [access_lists](./access_lists.md) | | EIP-2930 access-list entries, one row per storage key |
 | [address_appearances](./address_appearances.md) | | every address that appears in a block, with the relationship that made it appear |
+| [authorizations](./authorizations.md) | | EIP-7702 authorization tuples, with the recovered authority |
 | [balance_diffs](./balance_diffs.md) | | ETH balance changes, as before and after values |
 | [balance_reads](./balance_reads.md) | | ETH balances read during execution |
 | [balances](./balances.md) | | ETH balance of an address at a block |
@@ -21,7 +23,9 @@ authority when the two disagree.
 | [code_diffs](./code_diffs.md) | | contract code changes, as before and after values |
 | [code_reads](./code_reads.md) | | contract code read during execution |
 | [codes](./codes.md) | | contract code at a block |
+| [consolidation_requests](./consolidation_requests.md) | | EIP-7251 consolidation requests, from the consensus layer |
 | [contracts](./contracts.md) | | contracts deployed, with deployer, factory and init code |
+| [deposit_requests](./deposit_requests.md) | | EIP-6110 deposit requests, from the consensus layer |
 | [erc20_balances](./erc20_balances.md) | | ERC-20 balance of an address at a block |
 | [erc20_metadata](./erc20_metadata.md) | | ERC-20 name, symbol and decimals |
 | [erc20_supplies](./erc20_supplies.md) | | ERC-20 total supply at a block |
@@ -51,6 +55,23 @@ authority when the two disagree.
 | [trace_calls](./trace_calls.md) | | `trace_call` results, alongside the call that produced them |
 | [transactions](./transactions.md) | `txs` | one row per transaction |
 | [vm_traces](./vm_traces.md) | `opcode_traces` | parity `vmTrace` opcode steps |
+| [withdrawal_requests](./withdrawal_requests.md) | | EIP-7002 withdrawal requests, from the consensus layer |
+| [withdrawals](./withdrawals.md) | | EIP-4895 validator withdrawals, one row each |
+
+## Datasets that read the consensus layer
+
+Five datasets are not served by an execution node at all.
+
+| dataset | needs | why |
+| --- | --- | --- |
+| [blobs](./blobs.md) | `--beacon-rpc` or `--blob-archive` | the execution layer sees only a blob's versioned hash, never the blob |
+| [deposit_requests](./deposit_requests.md) | `--beacon-rpc` | EIP-7685 puts `requests_hash` in the header and the requests nowhere |
+| [withdrawal_requests](./withdrawal_requests.md) | `--beacon-rpc` | as above |
+| [consolidation_requests](./consolidation_requests.md) | `--beacon-rpc` | as above |
+
+[withdrawals](./withdrawals.md) is the exception that looks like it belongs
+here and does not: EIP-4895 withdrawals are in the execution block body, so an
+ordinary RPC url is enough.
 
 ## Dataset group names
 

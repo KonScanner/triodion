@@ -22,7 +22,7 @@
 2. [Installation](#installation)
 3. [Data Schema](#data-schemas)
 4. [Multi-Chain Support](#multi-chain-support)
-5. [Beacon Chain and Blobs](#beacon-chain-and-blobs)
+5. [Beacon Chain: Blobs and Execution Requests](#beacon-chain-blobs-and-execution-requests)
 6. [Breaking Changes](#breaking-changes)
 7. [Code Guide](#code-guide)
 8. [Documentation](#documentation)
@@ -121,7 +121,7 @@ An attempt is made to ensure that the dataset schemas conform to a common set of
 
 Standard types across tables:
 - `block_number`: `u32`
-- `transaction_index`: `u32` on the log- and trace-derived datasets, `u64` on `transactions`, `blobs` and the `geth_*` diff datasets
+- `transaction_index`: `u32` on the log- and trace-derived datasets, `u64` on `transactions`, `blobs`, `access_lists`, `authorizations` and the `geth_*` diff datasets
 - `nonce`: `u64`
 - `gas_used`: `u64`
 - `gas_limit`: `u64`
@@ -221,7 +221,7 @@ Every column added for these chain families is opt-in. The default columns are u
 
 Public L2 endpoints cap the size of a JSON-RPC batch. OP Mainnet answers `413` above ten calls and Base answers `-32014 "maximum 10 calls in 1 batch"`. `triodion` splits a batch and retries when a provider rejects it for size. Ratelimits and authentication failures are excluded from that rule, because shrinking a batch sends more requests to a node that just asked for fewer.
 
-## Beacon Chain and Blobs
+## Beacon Chain: Blobs and Execution Requests
 
 The execution layer only ever sees a blob's `blob_versioned_hashes`. The blob itself lives on the consensus layer. The `blobs` dataset reads blob sidecars from a beacon node and emits one row per blob, joined back to the L1 transaction that paid for it by matching the sidecar's KZG-commitment hash against that transaction's `blob_versioned_hashes`. Nothing else links the two.
 
@@ -264,6 +264,41 @@ triodion blobs --blocks 20000000 --rpc $ETH_RPC_URL \
 The first collects 20 blob rows. The second collects one row: `slot` 9204782, `versioned_hash` `0x017ba4bd9c166498865a3d08618e333ee84812941b5c3a356971b4a6ffffa574`, `transaction_hash` `0x0ff07f37baa7fa26bb7de3d3fc63002bf0acf3295bdab7f67c108c0d1a3bff15`, `blob_size` 131072, `blob_used_size` 1671, `rollup` `taiko`, and `blob_source` `archive`.
 
 `epoch`, `proposer_index`, `kzg_proof`, `transaction_index`, `blob_used_size`, and `blob` (the 131,072 bytes themselves) are opt-in columns. Use `triodion help blobs` for the full schema.
+
+#### EIP-7685 execution requests
+
+Prague added three request types that flow from the execution layer to the consensus layer: EIP-6110 deposits, EIP-7002 withdrawal requests, and EIP-7251 consolidations. Each gets its own dataset, because the three have nothing in common except the envelope that carries them.
+
+| dataset | EIP | one row per |
+| :- | :- | :- |
+| `deposit_requests` | 6110 | validator deposit |
+| `withdrawal_requests` | 7002 | exit or partial withdrawal, triggered from the execution layer |
+| `consolidation_requests` | 7251 | consolidation, or a `0x01` to `0x02` credential upgrade |
+
+The execution layer commits to all of them in one header field, `requests_hash`, and serves none of them. `eth_getBlockByNumber` returns the commitment and nothing else, and a commitment cannot be turned back into what it commits to. So these three read the consensus block and require `--beacon-rpc`:
+
+```bash
+triodion deposit_requests -b 25800355 --beacon-rpc $BEACON_RPC_URL
+```
+
+There is no archive fallback and none is needed. Beacon *blocks* are not pruned the way blob sidecars are — a slot from 2022 still answers. The node-side limit is a different one: a checkpoint-synced beacon node without backfill holds nothing before its checkpoint and answers `404`, which triodion reports as an error naming that cause rather than as an empty result.
+
+triodion reads the *blinded* beacon block, which carries the same `execution_requests` and the same execution block number without embedding the execution payload — 15 KB against 389 KB on a measured mainnet slot. Nodes that do not serve the blinded endpoint fall back to the full block automatically. The block number the consensus block reports is checked against the one asked for, so a slot derivation that ever drifted would error instead of filing one block's requests under another.
+
+Before Prague these datasets write no rows, which is correct rather than missing: execution requests did not exist. Deposits before Prague are still available, from the deposit contract's `DepositEvent` logs.
+
+Two encodings in these datasets mean something other than what they look like, and each has a companion column so the trap is visible in the output:
+
+- A `withdrawal_requests` row with `amount_gwei` of `0` is a **full exit**, not an empty request. Summing that column reports zero for the largest withdrawals on the chain. `is_full_exit` sits beside it.
+- A `consolidation_requests` row whose `source_pubkey` equals its `target_pubkey` is a **credential upgrade** to the compounding kind, not a merge of two validators. These were the majority of such requests after Prague. `is_credential_upgrade` sits beside it.
+
+#### EIP-4895 withdrawals are not a beacon dataset
+
+`withdrawals` looks like it belongs above and does not. EIP-4895 withdrawals are in the execution block body, so an ordinary RPC url is enough.
+
+The dataset emits one row per withdrawal, where [blocks](book/datasets/blocks.md) carries only `withdrawals_count` and `withdrawals_amount_gwei`. An aggregate cannot be taken apart afterwards, so validator-level payouts were previously unrecoverable from triodion's output.
+
+A withdrawal has no sender, no gas cost, no receipt and no transaction hash, and it never executes — which means it appears in no other dataset. An ETH-flow analysis built from `traces` and `native_transfers` alone is missing every validator payout on the chain.
 
 #### Known limitation: missed slots
 
@@ -426,7 +461,9 @@ Transaction specification syntax
 ```
 triodion datasets
 ─────────────────
+- access_lists
 - address_appearances
+- authorizations
 - balance_diffs
 - balance_reads
 - balances
@@ -435,7 +472,9 @@ triodion datasets
 - code_diffs
 - code_reads
 - codes
+- consolidation_requests
 - contracts
+- deposit_requests
 - erc20_balances
 - erc20_metadata
 - erc20_supplies
@@ -465,6 +504,8 @@ triodion datasets
 - trace_calls
 - transactions (alias = txs)
 - vm_traces (alias = opcode_traces)
+- withdrawal_requests
+- withdrawals
 
 dataset group names
 ───────────────────

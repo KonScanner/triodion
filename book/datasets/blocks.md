@@ -77,6 +77,13 @@ A single commitment over the block's execution requests: EIP-6110 deposits,
 EIP-7002 withdrawals and EIP-7251 consolidations. Added by Prague. Null before
 Prague and on chains without it.
 
+It is a commitment and nothing more — the requests themselves are not in the
+execution block, and a hash cannot be turned back into what it commits to. For
+the requests, read [deposit_requests](./deposit_requests.md),
+[withdrawal_requests](./withdrawal_requests.md) and
+[consolidation_requests](./consolidation_requests.md), which take them from the
+consensus block and need `--beacon-rpc`.
+
 ### Arbitrum header fields: `l1_block_number`, `send_root`, `send_count`
 
 Arbitrum adds three fields to the header. `l1_block_number` is the L1 block the
@@ -108,3 +115,10 @@ Two columns deliberately break this rule. `withdrawals_count` and
 carries no withdrawals list at all. They are not nullable. Pair them with
 `timestamp` if you need to separate "no withdrawals in this block" from
 "before withdrawals existed".
+
+## The withdrawals themselves
+
+Those two columns are an aggregate, and an aggregate cannot be taken apart
+again: which validator was paid, and how much each was paid, is not recoverable
+from a count and a sum. [withdrawals](./withdrawals.md) emits one row per
+withdrawal from the same block body, with no extra RPC url required.

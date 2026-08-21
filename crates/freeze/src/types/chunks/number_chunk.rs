@@ -90,6 +90,14 @@ impl NumberChunk {
 }
 
 pub(crate) fn range_to_chunks(start: &u64, end: &u64, chunk_size: &u64) -> Vec<(u64, u64)> {
+    // A zero chunk size has no meaning and is not survivable here: the body
+    // computes `chunk_start + 0 - 1` (underflow) and advances by `+= 0`, so the
+    // loop never terminates and `chunks` grows until the process is OOM-killed.
+    // The CLI rejects `--chunk-size 0` before this point; this guard keeps any
+    // other caller from hanging.
+    if *chunk_size == 0 {
+        return vec![(*start, *end)]
+    }
     let mut chunks: Vec<(u64, u64)> = Vec::new();
     let mut chunk_start = *start;
     loop {

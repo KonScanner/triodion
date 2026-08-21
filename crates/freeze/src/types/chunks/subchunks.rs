@@ -27,6 +27,12 @@ impl Subchunk for BlockChunk {
 
     fn subchunk_by_count(&self, n_chunks: &u64) -> Vec<BlockChunk> {
         let total_blocks = self.size();
+        // `div_ceil(0)` panics with "attempt to divide by zero". The CLI rejects
+        // `--n-chunks 0`; asking for zero chunks anywhere else means "leave it
+        // whole" rather than "crash".
+        if *n_chunks == 0 {
+            return self.subchunk_by_size(&total_blocks.max(1))
+        }
         let chunk_size = total_blocks.div_ceil(*n_chunks);
         self.subchunk_by_size(&chunk_size)
     }

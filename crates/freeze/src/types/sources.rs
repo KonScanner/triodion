@@ -80,6 +80,13 @@ pub struct Source {
     pub l1_chain_id: Option<u64>,
     /// rpc url passed via `--l1-rpc`. `None` if not configured.
     pub l1_rpc_url: Option<String>,
+    /// Optional consensus-layer access, for the beacon-chain datasets.
+    ///
+    /// Populated when `--beacon-rpc <url>` is passed. `None` for
+    /// execution-only runs; the beacon datasets error rather than guessing a
+    /// slot clock. Shares this `Source`'s semaphore so one concurrency budget
+    /// covers both layers.
+    pub beacon: Option<Arc<crate::types::beacon::BeaconSource>>,
 }
 
 impl Source {
@@ -386,6 +393,7 @@ impl Source {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            beacon: None,
         };
 
         Ok(source)

@@ -84,6 +84,30 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
         (None, None, None)
     };
 
+    // Optional consensus-layer access. Only built when asked for: connecting
+    // reads the node's genesis and spec, which is a round-trip no
+    // execution-only run should pay.
+    //
+    // Resolution order for each url: flag -> env var -> none.
+    let beacon_rpc = args.beacon_rpc.clone().or_else(|| env::var("BEACON_RPC_URL").ok());
+    let blob_archive =
+        args.blob_archive.clone().or_else(|| env::var("BLOB_ARCHIVE_URL").ok()).map(|url| {
+            if url == "default" {
+                triodion_core::DEFAULT_BLOB_ARCHIVE.to_string()
+            } else {
+                url
+            }
+        });
+    let beacon = if beacon_rpc.is_some() {
+        Some(Arc::new(
+            triodion_core::BeaconSource::connect(beacon_rpc, blob_archive, semaphore.clone())
+                .await
+                .map_err(|e| ParseError::ParseError(format!("{e}")))?,
+        ))
+    } else {
+        None
+    };
+
     let output = Source {
         chain_id,
         inner_request_size: args.inner_request_size,
@@ -101,6 +125,7 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
         l1_provider,
         l1_chain_id,
         l1_rpc_url,
+        beacon,
     };
 
     Ok(output)

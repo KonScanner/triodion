@@ -7,6 +7,7 @@ define_datatypes!(
     BalanceDiffs,
     BalanceReads,
     Balances,
+    Blobs,
     Blocks,
     CodeDiffs,
     CodeReads,

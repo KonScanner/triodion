@@ -439,6 +439,7 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            beacon: None,
         };
         let source = Arc::new(source);
         for (test, res) in tests {
@@ -504,6 +505,7 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            beacon: None,
         });
         for (test, res) in tests {
             match test {
@@ -580,6 +582,7 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            beacon: None,
         };
         let source = Arc::new(source);
         for (test, res) in tests {

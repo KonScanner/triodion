@@ -179,6 +179,67 @@ pub(crate) fn arbitrum_one_block() -> Value {
     )
 }
 
+/// Ethereum mainnet block 20,000,000 (`0x1312d00`), reduced to its one
+/// EIP-4844 blob transaction.
+///
+/// The calldata is truncated to its selector — this fixture exists to exercise
+/// the blob-hash-to-transaction join, and nothing reads the input. Every other
+/// value, including the versioned hash, is verbatim.
+pub(crate) fn mainnet_blob_block() -> Value {
+    block(
+        json!({
+            "hash": "0xd24fd73f794058a3807db926d8898c6481e902b7edb91ce0d479d6760f276183",
+            "parentHash": "0x9f6d1a1a5e9d0b1c14a6a1cb2ad0f0f3a3ef7c34cb03bd0f18df2a3ba46d3d78",
+            "number": "0x1312d00",
+            // 2024-06-01T22:36:47Z -> beacon slot 9,204,782.
+            "timestamp": "0x665ba27f",
+            "miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5",
+            "gasLimit": "0x1c9c380",
+            "gasUsed": "0xb5e6b5",
+            "difficulty": "0x0",
+            "size": "0x1f3a4",
+            "extraData": "0x6265617665726275696c642e6f7267",
+            "baseFeePerGas": "0x1263d3d54",
+            "mixHash": "0x2d6bd1cf0f8ac4a1e0d0d0a9a5b0e2c1f7b6a3d4c5e6f70819a2b3c4d5e6f708",
+            "nonce": "0x0000000000000000",
+            "blobGasUsed": "0x20000",
+            "excessBlobGas": "0x0",
+            "parentBeaconBlockRoot":
+                "0x2e5d1f04e0bd1a1b6c1a6a04c9a2d9d3e56f4a1b2c3d4e5f60718293a4b5c6d7",
+            "withdrawals": [],
+            "withdrawalsRoot":
+                "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        }),
+        vec![json!({
+            "hash": "0x0ff07f37baa7fa26bb7de3d3fc63002bf0acf3295bdab7f67c108c0d1a3bff15",
+            "blockHash": "0xd24fd73f794058a3807db926d8898c6481e902b7edb91ce0d479d6760f276183",
+            "blockNumber": "0x1312d00",
+            "transactionIndex": "0x15",
+            "type": "0x3",
+            "chainId": "0x1",
+            "from": "0x000000633b68f5d8d3a86593ebb815b4663bcbe0",
+            "to": "0x06a9ab27c7e2255df1815e6cc0168d7755feb19a",
+            "gas": "0x2dc6c0",
+            "gasPrice": "0x25049f114",
+            "maxFeePerGas": "0x826299e00",
+            "maxPriorityFeePerGas": "0x12a05f200",
+            "maxFeePerBlobGas": "0x3b9aca00",
+            "nonce": "0x50d6",
+            "value": "0x3b9aca00",
+            // Truncated to the selector; see the note above.
+            "input": "0xef16e845",
+            "accessList": [],
+            "blobVersionedHashes": [
+                "0x017ba4bd9c166498865a3d08618e333ee84812941b5c3a356971b4a6ffffa574"
+            ],
+            "r": "0x79d49cd5724eb7194af4202b59a25e9782d3bd6cb8f20e7049dd0204c8ff58e8",
+            "s": "0x662fb12590d7121243aaddf9d39ab8231758abbfe84df53805750fd40db6c1ce",
+            "v": "0x1",
+            "yParity": "0x1",
+        })],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +309,7 @@ mod tests {
     fn the_fixtures_are_well_formed_hex_throughout() {
         assert_byte_strings_are_well_formed(&op_mainnet_block(), "op_mainnet_block", None);
         assert_byte_strings_are_well_formed(&arbitrum_one_block(), "arbitrum_one_block", None);
+        assert_byte_strings_are_well_formed(&mainnet_blob_block(), "mainnet_blob_block", None);
     }
 
     #[test]
@@ -262,5 +324,6 @@ mod tests {
         };
         assert_eq!(lengths(op_mainnet_block()), vec![164, 36]);
         assert_eq!(lengths(arbitrum_one_block()), vec![132]);
+        assert_eq!(lengths(mainnet_blob_block()), vec![4]);
     }
 }

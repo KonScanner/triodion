@@ -376,6 +376,7 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            beacon: None,
         })
     }
 

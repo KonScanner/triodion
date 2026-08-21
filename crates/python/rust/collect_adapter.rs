@@ -213,6 +213,12 @@ pub fn _collect(
             // Programmatic callers needing dual-chain Source should use
             // `Source::with_l1_rpc(url)` directly after constructing a Source.
             l1_rpc: None,
+            // Consensus-layer access, same story: CLI-only for now. The beacon
+            // datasets error clearly when these are unset rather than assuming
+            // a slot clock, so leaving them `None` here is safe — the Python
+            // wheel simply cannot reach those datasets yet.
+            beacon_rpc: None,
+            blob_archive: None,
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             match run_collect(args).await {

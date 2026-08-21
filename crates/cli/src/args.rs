@@ -98,6 +98,23 @@ pub struct Args {
     #[arg(long, value_name = "URL", help_heading = "Source Options")]
     pub l1_rpc: Option<String>,
 
+    /// Consensus-layer (beacon) REST API url, e.g. http://localhost:5052.
+    ///
+    /// Required by the beacon datasets. The slot clock — genesis time, seconds
+    /// per slot, the blob schedule — is read from this node rather than
+    /// compiled in, so there is no default and no guess.
+    #[arg(long, value_name = "URL", help_heading = "Source Options")]
+    pub beacon_rpc: Option<String>,
+
+    /// Blob archive url, for slots the beacon node has pruned.
+    ///
+    /// Beacon nodes only serve blob sidecars for ~18 days. Pass an archive to
+    /// reach older blobs; `--blob-archive default` uses the public Blobscan
+    /// API. Without one, historical blob queries return nothing rather than
+    /// silently reporting a block as blob-free.
+    #[arg(long, value_name = "URL", help_heading = "Source Options")]
+    pub blob_archive: Option<String>,
+
     /// Network name [default: name of eth_getChainId]
     #[arg(long, help_heading = "Source Options")]
     pub network_name: Option<String>,

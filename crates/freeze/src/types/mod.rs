@@ -1,4 +1,6 @@
 /// type specifications for triodion_core crate
+/// consensus-layer (beacon chain) access
+pub mod beacon;
 /// cross-chain-family plumbing (Ethereum / OP stack / Arbitrum stack)
 pub mod chains;
 /// type specifications for chunk types
@@ -57,6 +59,9 @@ pub mod schemas;
 /// types related to summaries
 pub mod summaries;
 
+pub use beacon::{
+    BeaconConfig, BeaconSource, BlobProvenance, BlobRecord, BlobSidecar, DEFAULT_BLOB_ARCHIVE,
+};
 pub use chains::{
     arbitrum, is_reencodable, op, other_bool, other_bytes, other_decimal_f64, other_u256,
     other_u64, ChainFamily, RpcBlock, RpcReceipt, RpcTransaction, TriodionNetwork,

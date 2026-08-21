@@ -6,6 +6,8 @@ pub mod balance_diffs;
 pub mod balance_reads;
 /// balances
 pub mod balances;
+/// blobs
+pub mod blobs;
 /// blocks
 pub mod blocks;
 /// code diffs
@@ -79,6 +81,7 @@ pub use address_appearances::*;
 pub use balance_diffs::*;
 pub use balance_reads::*;
 pub use balances::*;
+pub use blobs::*;
 pub use blocks::*;
 pub use code_diffs::*;
 pub use code_reads::*;

@@ -466,7 +466,7 @@ pub(crate) fn print_triodion_conclusion(
             "  {:>width$} / {} ({}%)",
             freeze_summary.errored.len().separate_with_commas(),
             n_chunks_str,
-            format_float((100 * freeze_summary.errored.len() / n_chunks) as f64),
+            format_float(percent_of(freeze_summary.errored.len(), n_chunks)),
             width = width
         ),
         4,
@@ -477,7 +477,7 @@ pub(crate) fn print_triodion_conclusion(
             "  {:>width$} / {} ({}%)",
             freeze_summary.skipped.len().separate_with_commas(),
             n_chunks_str,
-            format_float((100 * freeze_summary.skipped.len() / n_chunks) as f64),
+            format_float(percent_of(freeze_summary.skipped.len(), n_chunks)),
             width = width
         ),
         4,
@@ -488,7 +488,7 @@ pub(crate) fn print_triodion_conclusion(
             "{:>width$} / {} ({}%)",
             freeze_summary.completed.len().separate_with_commas(),
             n_chunks_str,
-            format_float((100 * freeze_summary.completed.len() / n_chunks) as f64),
+            format_float(percent_of(freeze_summary.completed.len(), n_chunks)),
             width = width
         ),
         4,
@@ -571,6 +571,20 @@ fn print_unit_speeds(name: String, n_completed: u64, total_time: f64) {
     print_bullet_indent(name + " per day", format!("{:>width$}", per_day_str, width = 6), 4);
 }
 
+/// Percentage of `total` that `count` represents, as a float.
+///
+/// The arithmetic must happen in `f64`. Written as `(100 * count / total) as
+/// f64` — integer division first — 3 errored chunks out of 400 truncates to
+/// `0`, and the run prints "chunks errored: 3 / 400 (0.0%)". Small-but-real
+/// error rates are exactly the ones a user needs to see. `total == 0` yields
+/// `0.0` rather than dividing by zero.
+fn percent_of(count: usize, total: usize) -> f64 {
+    if total == 0 {
+        return 0.0
+    }
+    100.0 * (count as f64) / (total as f64)
+}
+
 fn format_float(number: f64) -> String {
     let decimal_places = 1;
 
@@ -586,4 +600,29 @@ fn format_float(number: f64) -> String {
         format!("{:0>width$}", frac_part, width = decimal_places).trim_end_matches('0').to_string();
 
     format!("{}.{}", int_part.separate_with_commas(), frac_str)
+}
+
+#[cfg(test)]
+mod percent_of_tests {
+    use super::percent_of;
+
+    #[test]
+    fn a_small_error_rate_is_not_rounded_away() {
+        // The old expression `(100 * count / total) as f64` did the division in
+        // integer space, so 3 errored chunks in 400 printed as "0.0%" — the
+        // rate a user most needs to notice.
+        assert!((percent_of(3, 400) - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn whole_percentages_are_unchanged() {
+        assert!((percent_of(1, 4) - 25.0).abs() < f64::EPSILON);
+        assert!((percent_of(400, 400) - 100.0).abs() < f64::EPSILON);
+        assert!((percent_of(0, 400) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn zero_chunks_does_not_divide_by_zero() {
+        assert_eq!(percent_of(0, 0), 0.0);
+    }
 }

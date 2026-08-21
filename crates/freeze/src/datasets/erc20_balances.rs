@@ -38,10 +38,11 @@ impl CollectByBlock for Erc20Balances {
         call_data.extend(request.address()?);
         let block_number = request.ethers_block_number()?;
         let contract = request.ethers_contract()?;
-        let balance = source.call2(contract, call_data, block_number).await.ok();
-        // try_from_be_slice avoids panicking on proxies / non-standard contracts
-        // whose balanceOf() returns more than 32 bytes (drop the row instead).
-        let balance = balance.and_then(|x| U256::try_from_be_slice(x.as_ref()));
+        // A revert, or an address with no code, means "no balance to report"
+        // and becomes a null. A node that could not serve the state propagates
+        // so the chunk is counted as errored rather than written out as nulls.
+        let output = contract_read(source.call2(contract, call_data, block_number).await)?;
+        let balance = output.and_then(|bytes| decode_u256_word(&bytes));
         Ok((request.block_number()? as u32, request.contract()?, request.address()?, balance))
     }
 
@@ -87,12 +88,9 @@ impl MulticallBatchable for Erc20Balances {
     }
 
     fn decode_row(params: &Params, results: &[Multicall3::Result]) -> R<Self::Response> {
-        let r = &results[0];
-        let balance = if r.success && r.returnData.len() >= 32 {
-            Some(U256::from_be_slice(&r.returnData[..32]))
-        } else {
-            None
-        };
+        // Indexing would panic the worker task on a short aggregate3 return.
+        let r = results.first().ok_or_else(|| err("multicall returned no result for row"))?;
+        let balance = if r.success { decode_u256_word(&r.returnData) } else { None };
         Ok((params.block_number()? as u32, params.contract()?, params.address()?, balance))
     }
 }

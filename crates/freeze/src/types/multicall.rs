@@ -349,6 +349,43 @@ where
     columns.create_dfs(&query.schemas, chain_id)
 }
 
+/// Whether a smaller batch could plausibly succeed where this one failed.
+///
+/// Splitting is a response to *size*: a payload the node refused to accept, a
+/// response it refused to return, a gas or time budget the batch exceeded.
+/// Anything else — pruned state, an unsupported method, an auth rejection, a
+/// rate limit — is a property of the request, not of its length, and halving
+/// only multiplies the failed requests.
+fn batch_may_shrink_to_fit(error: &CollectError) -> bool {
+    let CollectError::ProviderError(rpc_err) = error else {
+        // Not a provider failure at all (a decode mismatch, a short result
+        // slice): a smaller batch is worth one attempt, matching the previous
+        // behaviour for these cases.
+        return true
+    };
+    let Some(payload) = rpc_err.as_error_resp() else {
+        // A transport-level failure: a dropped connection or a timeout can be
+        // payload-size driven, so shrinking is a reasonable response.
+        return true
+    };
+
+    // A throttled node wants FEWER requests. Splitting sends more.
+    if payload.is_retry_err() {
+        return false
+    }
+
+    let message = payload.message.to_ascii_lowercase();
+    message.contains("too large") ||
+        message.contains("too big") ||
+        message.contains("exceeds") ||
+        message.contains("exceeded") ||
+        message.contains("limit") ||
+        message.contains("timeout") ||
+        message.contains("timed out") ||
+        message.contains("out of gas") ||
+        message.contains("gas required exceeds")
+}
+
 /// Iteratively dispatch `aggregate3` against the batch, halving on RPC failure
 /// down to single-row batches. A single-row failure falls through to
 /// `D::extract` so the row is preserved (per the dataset's own per-call decoder).
@@ -368,7 +405,18 @@ where
     while let Some(current) = stack.pop() {
         match multicall_batch::<D>(block, &current, source, require_success, mc_address).await {
             Ok(responses) => out.extend(responses),
-            Err(_) if current.len() > 1 => {
+
+            // Halving only helps when a SMALLER batch could succeed: an
+            // oversized payload, a gas cap, a response-size limit, a timeout.
+            // A node that cannot serve this block at all — pruned archive
+            // state, an unsupported method, a rejected key — fails identically
+            // at every batch size, so splitting just multiplies the damage.
+            // The old bare `Err(_)` cascaded on everything: a 250-row batch
+            // against a non-archive endpoint issued 2*250-1 doomed `aggregate3`
+            // calls and then 250 more per-call retries, tripling the request
+            // rate against a node that had already said no (and, when the cause
+            // was a rate limit, precisely when it asked for less traffic).
+            Err(e) if current.len() > 1 && batch_may_shrink_to_fit(&e) => {
                 let mid = current.len() / 2;
                 let mut left = current;
                 let right = left.split_off(mid);
@@ -378,10 +426,14 @@ where
                 stack.push(right);
                 stack.push(left);
             }
+
+            Err(e) if current.len() > 1 => return Err(e),
+
             Err(_) => {
-                // Singleton batch failed at the RPC layer — fall through to
-                // per-call extract so the row's `Response` matches the
-                // dataset's existing semantics (rather than dropping the row).
+                // Singleton batch failed. Fall through to the per-call path so
+                // the row is decoded by the dataset's own `extract` — which now
+                // classifies the failure itself: a contract-level refusal
+                // becomes a null, a node-level failure propagates.
                 let p = current.into_iter().next().expect("len checked above");
                 out.push(D::extract(p, source.clone(), query.clone()).await?);
             }
@@ -411,10 +463,12 @@ where
     }
 
     let call_data = Multicall3::aggregate3Call { calls: all_calls }.abi_encode();
-    let raw: Bytes = source
-        .call2(mc_address, call_data, block)
-        .await
-        .map_err(|e| CollectError::CollectError(format!("multicall RPC failed: {e:?}")))?;
+    // Propagate the provider error UNCHANGED. Stringifying it here into a
+    // `CollectError::CollectError` erased the `ProviderError` variant, which is
+    // the one `CollectError::call_outcome` matches on — so every batch-layer
+    // failure looked unclassifiable and the caller could not tell a pruned-state
+    // refusal from a batch that was merely too big.
+    let raw: Bytes = source.call2(mc_address, call_data, block).await?;
     let decoded = Multicall3::aggregate3Call::abi_decode_returns(&raw)
         .map_err(|e| CollectError::CollectError(format!("multicall decode failed: {e:?}")))?;
 

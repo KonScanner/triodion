@@ -148,3 +148,179 @@ pub enum FileError {
     #[error("Error writing file")]
     FileWriteError,
 }
+
+/// Why a contract read (`eth_call`) produced no value.
+///
+/// The two cases look identical at the call site — both are an `Err` coming
+/// back from the provider — but they mean opposite things about the chain, and
+/// conflating them is how a run silently writes a column full of nulls while
+/// reporting 100% success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallOutcome {
+    /// The node executed the call and the **contract** declined to answer:
+    /// a revert, an invalid opcode, running out of gas, or an address that
+    /// holds no code at all.
+    ///
+    /// This is a fact about the chain, not a failure of the extraction. "This
+    /// address has no `totalSupply()`" is real, reportable data, so a null cell
+    /// is the correct output and the row still counts as collected.
+    ContractRefused,
+
+    /// The **node** could not answer: state pruned behind a non-archive
+    /// endpoint, a rate limit, a timeout, a dropped connection, an
+    /// undecodable response.
+    ///
+    /// Nothing whatsoever is known about the contract here. Writing a null
+    /// would fabricate the claim "we asked and there was nothing", so the row
+    /// must surface as an error instead.
+    NodeFailed,
+}
+
+impl CollectError {
+    /// Classify this error as a contract-level refusal or a node-level failure.
+    ///
+    /// Only an `eth_call` that the node *ran to completion* can be a
+    /// [`CallOutcome::ContractRefused`]; everything else — including the
+    /// `-32602`/`-32000` families that non-archive providers return for pruned
+    /// state — is a [`CallOutcome::NodeFailed`]. The default is deliberately
+    /// `NodeFailed`: an unrecognised error must never be laundered into a null.
+    pub fn call_outcome(&self) -> CallOutcome {
+        let Self::ProviderError(rpc_err) = self else { return CallOutcome::NodeFailed };
+        let Some(payload) = rpc_err.as_error_resp() else { return CallOutcome::NodeFailed };
+
+        // A rate limit is the node throttling us, never the contract talking.
+        // Checked before the message scan because some providers word their
+        // throttle message in ways that could trip the substring match below.
+        if payload.is_retry_err() {
+            return CallOutcome::NodeFailed
+        }
+
+        // Geth, reth, erigon, nethermind and every provider that proxies them
+        // report contract-level failures through the message, not the code
+        // (the code is an un-namespaced -32000 on most of them). Matching on
+        // the message is unlovely but it is the only portable signal.
+        let message = payload.message.to_ascii_lowercase();
+        let contract_refused = message.contains("revert") ||
+            message.contains("invalid opcode") ||
+            message.contains("out of gas") ||
+            message.contains("invalid jump");
+
+        if contract_refused {
+            CallOutcome::ContractRefused
+        } else {
+            CallOutcome::NodeFailed
+        }
+    }
+}
+
+/// Fold a contract read into `Option`, preserving node failures as errors.
+///
+/// This is the seam every `eth_call`-backed dataset must go through instead of
+/// `.await.ok()`. `.ok()` maps *both* outcomes to `None`, which is what let a
+/// pruned-state endpoint produce a full parquet file of nulls under a
+/// "chunks errored: 0" banner.
+///
+/// # Errors
+/// Returns the original error when it is a [`CallOutcome::NodeFailed`].
+pub fn contract_read<T>(result: R<T>) -> R<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(e) => match e.call_outcome() {
+            CallOutcome::ContractRefused => Ok(None),
+            CallOutcome::NodeFailed => Err(e),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::rpc::json_rpc::ErrorPayload;
+    use std::borrow::Cow;
+
+    /// Build the `CollectError` shape a provider produces for a JSON-RPC error
+    /// response, so the classifier is exercised on the real variant rather than
+    /// a stand-in.
+    fn error_resp(code: i64, message: &'static str) -> CollectError {
+        CollectError::ProviderError(RpcError::ErrorResp(ErrorPayload {
+            code,
+            message: Cow::Borrowed(message),
+            data: None,
+        }))
+    }
+
+    #[test]
+    fn plain_revert_is_a_contract_refusal() {
+        // geth / reth wording for a bare `revert()`
+        assert_eq!(
+            error_resp(3, "execution reverted").call_outcome(),
+            CallOutcome::ContractRefused
+        );
+    }
+
+    #[test]
+    fn revert_with_reason_is_a_contract_refusal() {
+        assert_eq!(
+            error_resp(-32000, "execution reverted: ERC20: zero address").call_outcome(),
+            CallOutcome::ContractRefused
+        );
+    }
+
+    #[test]
+    fn invalid_opcode_is_a_contract_refusal() {
+        // hitting a non-token address that happens to hold code
+        assert_eq!(
+            error_resp(-32000, "invalid opcode: INVALID").call_outcome(),
+            CallOutcome::ContractRefused
+        );
+    }
+
+    #[test]
+    fn pruned_archive_state_is_a_node_failure() {
+        // This is the regression that motivated the classifier: a non-archive
+        // endpoint refusing historical state used to be laundered into a null
+        // cell, so `erc20_supplies -b <old range>` wrote a file of nulls and
+        // still reported "chunks errored: 0".
+        assert_eq!(
+            error_resp(-32602, "Archive requests require a personal token.").call_outcome(),
+            CallOutcome::NodeFailed
+        );
+        assert_eq!(error_resp(-32000, "missing trie node").call_outcome(), CallOutcome::NodeFailed);
+    }
+
+    #[test]
+    fn rate_limit_is_a_node_failure() {
+        assert_eq!(error_resp(429, "Too Many Requests").call_outcome(), CallOutcome::NodeFailed);
+        assert_eq!(
+            error_resp(-32005, "exceeded project rate limit").call_outcome(),
+            CallOutcome::NodeFailed
+        );
+    }
+
+    #[test]
+    fn unrecognised_errors_default_to_node_failure() {
+        // The default must never be `ContractRefused`: an unclassified error
+        // turning into a null is exactly the silent-data-loss bug.
+        assert_eq!(error_resp(-32603, "internal error").call_outcome(), CallOutcome::NodeFailed);
+        assert_eq!(CollectError::BadSchemaError.call_outcome(), CallOutcome::NodeFailed);
+        assert_eq!(err("something went sideways").call_outcome(), CallOutcome::NodeFailed);
+    }
+
+    #[test]
+    fn contract_read_keeps_a_successful_value() {
+        assert_eq!(contract_read(Ok::<u8, CollectError>(7)).unwrap(), Some(7));
+    }
+
+    #[test]
+    fn contract_read_folds_a_revert_into_none() {
+        let out = contract_read(Err::<u8, _>(error_resp(3, "execution reverted"))).unwrap();
+        assert_eq!(out, None);
+    }
+
+    #[test]
+    fn contract_read_propagates_a_node_failure() {
+        let out =
+            contract_read(Err::<u8, _>(error_resp(-32602, "Archive requests require a token")));
+        assert!(out.is_err(), "a node failure must surface as an error, never as a null cell");
+    }
+}

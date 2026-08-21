@@ -56,7 +56,7 @@ pub use chunks::{
     AddressChunk, BlockChunk, CallDataChunk, Chunk, ChunkData, ChunkStats, SlotChunk, Subchunk,
     TopicChunk, TransactionChunk,
 };
-pub use conversions::{bytes_to_u32, ToVecHex, ToVecU8};
+pub use conversions::{bytes_to_u32, decode_u256_word, ToVecHex, ToVecU8};
 pub use dataframes::*;
 pub use datatypes::*;
 pub use files::{ColumnEncoding, FileFormat, FileOutput, SubDir};
@@ -67,7 +67,10 @@ pub use sources::{Fetcher, RateLimiter, Source, SourceLabels};
 // pub use summaries::{FreezeChunkSummary, FreezeSummary};
 pub use summaries::{print_all_datasets, print_dataset_info, FreezeSummary};
 
-pub use errors::{err, ChunkError, CollectError, FileError, FreezeError, ParseError, R};
+pub use errors::{
+    contract_read, err, CallOutcome, ChunkError, CollectError, FileError, FreezeError, ParseError,
+    R,
+};
 
 pub use collection::*;
 pub use execution::{ExecutionEnv, ExecutionEnvBuilder};

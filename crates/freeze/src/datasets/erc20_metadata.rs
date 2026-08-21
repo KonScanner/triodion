@@ -37,11 +37,6 @@ impl Dataset for Erc20Metadata {
     }
 }
 
-pub(crate) fn remove_control_characters(s: &str) -> String {
-    let re = regex::Regex::new(r"[ \x00-\x1F\x7F]").unwrap();
-    re.replace_all(s, "").to_string()
-}
-
 impl CollectByBlock for Erc20Metadata {
     type Response = (u32, Vec<u8>, Option<String>, Option<String>, Option<u32>);
 
@@ -49,30 +44,26 @@ impl CollectByBlock for Erc20Metadata {
         let block_number = request.ethers_block_number()?;
         let address = request.ethers_address()?;
 
+        // Each read folds a *contract-level* refusal (revert, or an address with
+        // no code) into `None`, while a *node-level* failure — pruned state on a
+        // non-archive endpoint, a rate limit, a timeout — propagates via `?`.
+        // Without that split, pointing this dataset at a non-archive RPC yields
+        // a file of nulls under a "chunks errored: 0" banner.
+
         // name
         let call_data = ERC20::nameCall::SELECTOR.to_vec();
-        let name = match source.call2(address, call_data, block_number).await {
-            Ok(output) => {
-                String::from_utf8(output.to_vec()).ok().map(|s| remove_control_characters(&s))
-            }
-            Err(_) => None,
-        };
+        let name = contract_read(source.call2(address, call_data, block_number).await)?
+            .and_then(|output| decode_string_or_bytes32(&output));
 
         // symbol
         let call_data = ERC20::symbolCall::SELECTOR.to_vec();
-        let symbol = match source.call2(address, call_data, block_number).await {
-            Ok(output) => {
-                String::from_utf8(output.to_vec()).ok().map(|s| remove_control_characters(&s))
-            }
-            Err(_) => None,
-        };
+        let symbol = contract_read(source.call2(address, call_data, block_number).await)?
+            .and_then(|output| decode_string_or_bytes32(&output));
 
         // decimals
         let call_data = ERC20::decimalsCall::SELECTOR.to_vec();
-        let decimals = match source.call2(address, call_data, block_number).await {
-            Ok(output) => bytes_to_u32(output).ok(),
-            Err(_) => None,
-        };
+        let decimals = contract_read(source.call2(address, call_data, block_number).await)?
+            .and_then(|output| bytes_to_u32(output).ok());
 
         Ok((request.block_number()? as u32, request.address()?, name, symbol, decimals))
     }
@@ -131,18 +122,25 @@ impl MulticallBatchable for Erc20Metadata {
     }
 
     fn decode_row(params: &Params, results: &[Multicall3::Result]) -> R<Self::Response> {
-        let name = if results[0].success {
-            decode_string_or_bytes32(&results[0].returnData)
+        // `calls_for_row` emits exactly three calls; a shorter slice means the
+        // node returned a malformed aggregate3, and indexing would panic the
+        // worker task rather than surface that as an error.
+        let [name_result, symbol_result, decimals_result] = results else {
+            return Err(err("multicall returned the wrong number of results for row"))
+        };
+        let name = if name_result.success {
+            decode_string_or_bytes32(&name_result.returnData)
         } else {
             None
         };
-        let symbol = if results[1].success {
-            decode_string_or_bytes32(&results[1].returnData)
+        let symbol = if symbol_result.success {
+            decode_string_or_bytes32(&symbol_result.returnData)
         } else {
             None
         };
-        let decimals = if results[2].success && !results[2].returnData.is_empty() {
-            bytes_to_u32(alloy::primitives::Bytes::copy_from_slice(&results[2].returnData)).ok()
+        let decimals = if decimals_result.success && !decimals_result.returnData.is_empty() {
+            bytes_to_u32(alloy::primitives::Bytes::copy_from_slice(&decimals_result.returnData))
+                .ok()
         } else {
             None
         };

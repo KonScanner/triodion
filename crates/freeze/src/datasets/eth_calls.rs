@@ -85,7 +85,8 @@ impl MulticallBatchable for EthCalls {
     }
 
     fn decode_row(params: &Params, results: &[Multicall3::Result]) -> R<Self::Response> {
-        let r = &results[0];
+        // Indexing would panic the worker task on a short aggregate3 return.
+        let r = results.first().ok_or_else(|| err("multicall returned no result for row"))?;
         let output_data =
             if r.success && !r.returnData.is_empty() { Some(r.returnData.to_vec()) } else { None };
         Ok((params.block_number()? as u32, params.contract()?, params.call_data()?, output_data))
@@ -99,7 +100,11 @@ async fn single_eth_call(request: &Params, source: &Arc<Source>) -> R<EthCallsRe
         ..Default::default()
     };
     let number = request.block_number()?;
-    let output = source.call(transaction, number).await.ok().map(|x| x.to_vec());
+    // A reverting call is a legitimate result for `eth_calls` — the user asked
+    // what this calldata does and "it reverts" is the answer, recorded as a
+    // null `output_data`. A node that could not serve the block propagates so
+    // the chunk is counted as errored rather than filled with nulls.
+    let output = contract_read(source.call(transaction, number).await)?.map(|x| x.to_vec());
     Ok((number as u32, request.contract()?, request.call_data()?, output))
 }
 

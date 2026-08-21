@@ -1,4 +1,3 @@
-use super::erc20_metadata::remove_control_characters;
 use crate::*;
 use alloy::{
     primitives::{Address, Bytes},
@@ -40,23 +39,19 @@ impl CollectByBlock for Erc721Metadata {
         let block_number = request.ethers_block_number()?;
         let address = request.ethers_address()?;
 
+        // A contract-level refusal becomes `None`; a node-level failure
+        // propagates so the chunk is reported as errored instead of silently
+        // written out as nulls. See `contract_read`.
+
         // name
         let call_data = ERC721::nameCall::SELECTOR.to_vec();
-        let name = match source.call2(address, call_data, block_number).await {
-            Ok(output) => {
-                String::from_utf8(output.to_vec()).ok().map(|s| remove_control_characters(&s))
-            }
-            Err(_) => None,
-        };
+        let name = contract_read(source.call2(address, call_data, block_number).await)?
+            .and_then(|output| decode_string_or_bytes32(&output));
 
         // symbol
         let call_data = ERC721::symbolCall::SELECTOR.to_vec();
-        let symbol = match source.call2(address, call_data, block_number).await {
-            Ok(output) => {
-                String::from_utf8(output.to_vec()).ok().map(|s| remove_control_characters(&s))
-            }
-            Err(_) => None,
-        };
+        let symbol = contract_read(source.call2(address, call_data, block_number).await)?
+            .and_then(|output| decode_string_or_bytes32(&output));
 
         Ok((request.block_number()? as u32, request.address()?, name, symbol))
     }
@@ -109,13 +104,18 @@ impl MulticallBatchable for Erc721Metadata {
     }
 
     fn decode_row(params: &Params, results: &[Multicall3::Result]) -> R<Self::Response> {
-        let name = if results[0].success {
-            decode_string_or_bytes32(&results[0].returnData)
+        // `calls_for_row` emits exactly two calls; indexing a shorter slice
+        // would panic the worker task instead of surfacing an error.
+        let [name_result, symbol_result] = results else {
+            return Err(err("multicall returned the wrong number of results for row"))
+        };
+        let name = if name_result.success {
+            decode_string_or_bytes32(&name_result.returnData)
         } else {
             None
         };
-        let symbol = if results[1].success {
-            decode_string_or_bytes32(&results[1].returnData)
+        let symbol = if symbol_result.success {
+            decode_string_or_bytes32(&symbol_result.returnData)
         } else {
             None
         };

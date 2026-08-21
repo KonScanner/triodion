@@ -1,4 +1,7 @@
-use crate::*;
+use crate::{
+    types::rpc_params::{log_address_matches, topic_matches},
+    *,
+};
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue, EventExt},
     rpc::types::Log,
@@ -87,7 +90,23 @@ impl CollectByTransaction for Logs {
     type Response = Vec<Log>;
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        source.get_transaction_logs(request.transaction_hash()?).await
+        let logs = source.get_transaction_logs(request.transaction_hash()?).await?;
+        // The dims never reach the node on this path: `--txs` asks for one
+        // transaction's whole receipt, so the narrowing the by-block path pins
+        // into the `eth_getLogs` filter has to be re-applied here. Without it a
+        // dim is accepted, counted into the partition set, printed in the run
+        // summary, and then ignored — the run returns rows it was asked to
+        // exclude and says nothing.
+        Ok(logs
+            .into_iter()
+            .filter(|log| {
+                log_address_matches(log, &request.address) &&
+                    topic_matches(log, 0, &request.topic0) &&
+                    topic_matches(log, 1, &request.topic1) &&
+                    topic_matches(log, 2, &request.topic2) &&
+                    topic_matches(log, 3, &request.topic3)
+            })
+            .collect())
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

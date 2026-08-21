@@ -28,6 +28,9 @@ pub async fn parse_query(args: &Args, source: Arc<Source>) -> Result<Query, Pars
         multicall: args.multicall,
         multicall_batch_size: args.multicall_batch_size,
         multicall_require_success: args.multicall_require_success,
+        batch_state_reads: args.batch_state_reads,
+        state_override_batch_size: args.state_override_batch_size,
+        batch_rpc_calls: args.batch_rpc_calls,
     })
 }
 

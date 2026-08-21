@@ -1,8 +1,5 @@
 use crate::*;
-use alloy::{
-    primitives::{Address, Bytes},
-    sol_types::SolCall,
-};
+use alloy::{primitives::Bytes, sol_types::SolCall};
 use polars::prelude::*;
 use std::collections::HashMap;
 
@@ -87,7 +84,7 @@ impl CollectByTransaction for Erc721Metadata {
 
 impl MulticallBatchable for Erc721Metadata {
     fn calls_for_row(params: &Params, require_success: bool) -> R<Vec<Multicall3::Call3>> {
-        let target = Address::from_slice(&params.address()?);
+        let target = params.ethers_address()?;
         let allow_failure = !require_success;
         Ok(vec![
             Multicall3::Call3 {

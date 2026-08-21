@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use alloy::{
     eips::BlockNumberOrTag,
@@ -9,6 +9,7 @@ use alloy::{
         Provider, RootProvider,
     },
     rpc::types::{
+        state::StateOverride,
         trace::{
             common::TraceResult,
             geth::{
@@ -36,7 +37,10 @@ use std::num::NonZeroU32;
 use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
 
 use crate::{
-    types::chains::{RpcBlock, RpcReceipt, RpcTransaction, TriodionProvider},
+    types::{
+        chains::{RpcBlock, RpcReceipt, RpcTransaction, TriodionProvider},
+        state_override::{override_unavailable, OverrideSupport, StateReader},
+    },
     CollectError,
 };
 
@@ -80,6 +84,42 @@ pub struct Source {
     pub l1_chain_id: Option<u64>,
     /// rpc url passed via `--l1-rpc`. `None` if not configured.
     pub l1_rpc_url: Option<String>,
+    /// Consecutive `eth_getStorageValues` misses, for the storage fast path.
+    ///
+    /// `eth_getStorageValues` reads many slots across many contracts natively —
+    /// no state override, no injected bytecode — but it landed in geth
+    /// v1.17.1 (March 2026) and nothing else ships it yet, so most endpoints
+    /// answer `-32601`. Worse, a load-balanced pool answers *inconsistently*:
+    /// the same URL served this method on one request and returned "Method not
+    /// found" on the next, because the pool holds a mix of node versions.
+    ///
+    /// So support cannot be probed once and cached either way. A positive is
+    /// not durable (the next request may hit an older backend) and a negative
+    /// is not either (the next may hit a newer one). Instead this counts
+    /// *consecutive* misses: the fast path is tried while the count is below
+    /// `STORAGE_VALUES_MISS_LIMIT`, a success resets it to zero, and an
+    /// endpoint that genuinely lacks the method stops being asked after a
+    /// handful of tries. A mixed pool keeps using it whenever it works.
+    pub storage_values_misses: Arc<std::sync::atomic::AtomicU32>,
+    /// Whether this endpoint honours the `eth_call` state-override set.
+    ///
+    /// Shared by every clone of this `Source`, so the discovery cost is paid
+    /// once per run rather than once per chunk. See
+    /// [`OverrideSupport`](crate::types::state_override::OverrideSupport).
+    ///
+    /// A hard latch, unlike the consecutive-miss counter next door. The two
+    /// answer different questions.
+    /// [`storage_values_misses`](Self::storage_values_misses) tracks whether a
+    /// *method exists* on the backend a request happens to land on, which a
+    /// load-balanced pool of mixed geth versions genuinely answers both ways.
+    /// State-override support is not per-backend in that way: `eth_call` has
+    /// taken the third parameter since geth 1.9 (2019), so a refusal today is a
+    /// provider policy — a plan tier, a proxy that strips the argument — and is
+    /// uniform and permanent for the run. And the evidence is decisive rather
+    /// than circumstantial: a sentinel that did not read back proves the
+    /// override was dropped, where a single `-32601` proves only where the
+    /// request landed.
+    pub state_override_support: Arc<OverrideSupport>,
     /// Optional consensus-layer access, for the beacon-chain datasets.
     ///
     /// Populated when `--beacon-rpc <url>` is passed. `None` for
@@ -145,9 +185,9 @@ impl Source {
 
     /// Send one logical batch of identical calls, splitting it as needed.
     ///
-    /// Starts at [`DEFAULT_RPC_BATCH_SIZE`] calls per HTTP request. If the
+    /// Starts at `DEFAULT_RPC_BATCH_SIZE` calls per HTTP request. If the
     /// provider rejects a batch *because of its size* — and only then, see
-    /// [`batch_too_large`] — the size is halved and the remaining work retried,
+    /// `batch_too_large` — the size is halved and the remaining work retried,
     /// down to one call per request. The chosen size persists for the rest of
     /// this call, so a 200-receipt block against a ten-call provider pays the
     /// discovery cost once rather than per batch.
@@ -159,7 +199,7 @@ impl Source {
     /// # Errors
     /// Any transport failure that is not a size complaint, and a size complaint
     /// that persists at one call per request.
-    async fn send_batch<P, T>(&self, method: &'static str, params: &[P]) -> Result<Vec<T>>
+    pub async fn send_batch<P, T>(&self, method: &'static str, params: &[P]) -> Result<Vec<T>>
     where
         P: alloy::rpc::json_rpc::RpcSend,
         T: alloy::rpc::json_rpc::RpcRecv,
@@ -393,6 +433,8 @@ impl Source {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            state_override_support: Arc::new(OverrideSupport::default()),
             beacon: None,
         };
 
@@ -834,6 +876,62 @@ impl Source {
         call_data: Vec<u8>,
         block_number: BlockNumber,
     ) -> Result<Bytes> {
+        self.call_with_gas_limit(address, call_data, block_number, None).await
+    }
+
+    /// Return output data of a contract call, refusing to spend more than
+    /// `gas_limit` on it.
+    ///
+    /// With `None` the node applies its own cap, which is generous — geth
+    /// defaults `eth_call` to 50,000,000 gas. That is the right default when
+    /// the callee is known, and the wrong one when it is not: probing an
+    /// arbitrary address runs whatever fallback function that address happens
+    /// to have, and a fallback that loops until it runs out of gas turns one
+    /// row into a node timeout that fails its whole chunk. A cap converts that
+    /// into an ordinary out-of-gas revert, which [`crate::contract_read`]
+    /// already folds into a null for the one row that caused it.
+    ///
+    /// The cap is a ceiling, not a reservation: a call that needs less spends
+    /// less, so a low limit costs a conforming contract nothing.
+    pub async fn call_with_gas_limit(
+        &self,
+        address: Address,
+        call_data: Vec<u8>,
+        block_number: BlockNumber,
+        gas_limit: Option<u64>,
+    ) -> Result<Bytes> {
+        let transaction = TransactionRequest {
+            to: Some(address.into()),
+            input: TransactionInput::new(call_data.into()),
+            gas: gas_limit,
+            ..Default::default()
+        };
+        let _permit = self.permit_request().await;
+        Self::map_err(
+            self.provider.call(WithOtherFields::new(transaction)).block(block_number.into()).await,
+        )
+    }
+
+    /// Return output data of a contract call, with a state-override set applied.
+    ///
+    /// The override is the third `eth_call` parameter: a per-address
+    /// `{balance, nonce, code, state, stateDiff}` map applied to a scratch copy
+    /// of the state before execution. [`crate::types::state_override`] uses it
+    /// to run extractor bytecode in a real contract's storage context, which is
+    /// how one request answers thousands of storage slots.
+    ///
+    /// # Errors
+    /// Propagates the provider error unchanged so callers can classify it —
+    /// an endpoint that rejects overrides outright, one that is missing archive
+    /// state, and one complaining about payload size all need different
+    /// responses, and stringifying here would erase the difference.
+    pub async fn call_with_overrides(
+        &self,
+        address: Address,
+        call_data: Vec<u8>,
+        overrides: StateOverride,
+        block_number: BlockNumber,
+    ) -> Result<Bytes> {
         let transaction = TransactionRequest {
             to: Some(address.into()),
             input: TransactionInput::new(call_data.into()),
@@ -841,8 +939,311 @@ impl Source {
         };
         let _permit = self.permit_request().await;
         Self::map_err(
-            self.provider.call(WithOtherFields::new(transaction)).block(block_number.into()).await,
+            self.provider
+                .call(WithOtherFields::new(transaction))
+                .overrides(overrides)
+                .block(block_number.into())
+                .await,
         )
+    }
+
+    /// Consecutive `eth_getStorageValues` misses after which the fast path is
+    /// abandoned for the rest of the process.
+    ///
+    /// Three, not one: a single `-32601` on a load-balanced pool means "this
+    /// request reached an older backend", not "this endpoint lacks the method".
+    /// Three in a row against a pool that actually supports it is unlikely, and
+    /// against one that does not it costs three cheap failures total.
+    const STORAGE_VALUES_MISS_LIMIT: u32 = 3;
+
+    /// Whether the native storage fast path is still worth attempting.
+    pub fn storage_values_worth_trying(&self) -> bool {
+        self.storage_values_misses.load(std::sync::atomic::Ordering::Relaxed) <
+            Self::STORAGE_VALUES_MISS_LIMIT
+    }
+
+    /// Read storage slots for one or more contracts with `eth_getStorageValues`.
+    ///
+    /// The method geth added in v1.17.1 does natively what the extractor does by
+    /// injection: many slots, across many contracts, in one round trip. Where it
+    /// exists it is strictly preferable — no `code` override, so none of the
+    /// override failure modes apply, and no dependence on the endpoint honouring
+    /// a parameter it may quietly drop.
+    ///
+    /// Values come back in the order their keys were sent, per address. The
+    /// server caps a request at 1024 slots summed across every address and
+    /// answers `-38026 "too many slots (max 1024)"` above it; callers must chunk.
+    ///
+    /// # Errors
+    /// Returns the provider error unchanged. `-32601` means this request reached
+    /// a backend without the method — see
+    /// [`storage_values_misses`](Self::storage_values_misses) for why that is
+    /// counted rather than cached.
+    pub async fn get_storage_values(
+        &self,
+        requests: &HashMap<Address, Vec<B256>>,
+        block_number: BlockNumber,
+    ) -> Result<HashMap<Address, Vec<B256>>> {
+        let _permit = self.permit_request().await;
+        let params = (requests, BlockNumberOrTag::Number(block_number));
+        let result: Result<HashMap<Address, Vec<B256>>> =
+            Self::map_err(self.provider.client().request("eth_getStorageValues", params).await);
+        match &result {
+            Ok(_) => self.storage_values_misses.store(0, std::sync::atomic::Ordering::Relaxed),
+
+            // Throttling says nothing about whether the method exists, and
+            // giving up on the fast path here would be perverse: the per-row
+            // path it demotes to sends *more* requests to the endpoint that
+            // just asked for fewer.
+            Err(e) if is_retry_error(e) => {}
+
+            // Everything else counts. `-32601` is the documented answer, but it
+            // is not the only one that means "stop asking": a gateway that
+            // rejects the method by prose, a `-38026` slot cap lower than ours,
+            // or a reply this client cannot deserialize all fail identically on
+            // every future request. Counting only `-32601` left those
+            // uncounted, so the fast path was re-attempted once per chunk for
+            // the whole run — measured at one wasted request per chunk against
+            // a node answering a shape we do not parse.
+            Err(_) => {
+                self.storage_values_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        result
+    }
+
+    /// Read many storage slots of one contract in a single request.
+    ///
+    /// Replaces `slots.len()` round trips of [`Self::get_storage_at`] with one
+    /// `eth_call`. Measured against a public mainnet endpoint: 500 slots went
+    /// from 500 requests / 1.17s to 1 request / 0.09s, and the per-call path
+    /// started returning HTTP 429 at ~2000 requests where the batched path
+    /// never did — against rate-limited providers the request-count reduction
+    /// matters more than the latency.
+    ///
+    /// Returns values in `slots` order, one per slot.
+    ///
+    /// # Errors
+    /// Returns [`CollectError::CollectError`] if the response does not prove
+    /// the override took effect — a wrong return length, or a sentinel slot
+    /// that did not read back as written. See [`StateReader::decode_response`].
+    /// Provider errors propagate unchanged.
+    pub async fn get_storage_at_many(
+        &self,
+        address: Address,
+        slots: &[U256],
+        block_number: BlockNumber,
+    ) -> Result<Vec<B256>> {
+        let reader = StateReader::Storage;
+        if let Some(why) = reader.refuses_target(address) {
+            return Err(CollectError::CollectError(format!(
+                "cannot batch-read storage at {address}: {why}"
+            )));
+        }
+        let (call_data, overrides, to) = reader.request(address, slots);
+        let output =
+            self.call_with_overrides(to, call_data.into(), overrides, block_number).await?;
+        reader.decode_response(&output, slots.len())
+    }
+
+    /// Read many storage slots of one contract, batched when the endpoint
+    /// allows it and one at a time when it does not.
+    ///
+    /// This is the entry point for a dataset whose *single row* needs several
+    /// slots — `proxy_slots` reads three ERC-1967 slots per address. Datasets
+    /// whose row is one slot go through
+    /// [`state_override_collect_by_block`](crate::state_override_collect_by_block)
+    /// instead, which can also batch across rows.
+    ///
+    /// Both paths consult the same [`Self::state_override_support`] memo, so an
+    /// endpoint that cannot do overrides is discovered once for the whole run
+    /// no matter which shape of caller discovers it.
+    ///
+    /// Values come back in `slots` order, one per slot, always.
+    ///
+    /// Chunks at [`DEFAULT_STATE_OVERRIDE_BATCH_SIZE`](crate::DEFAULT_STATE_OVERRIDE_BATCH_SIZE)
+    /// and not at `--state-override-batch-size`: a `Source` has no `Query`, and
+    /// threading one through for this would put a CLI type in the transport
+    /// layer. The knob still governs the runner, which is where large batches
+    /// actually arise — a caller here is reading a handful of slots for one row.
+    ///
+    /// # Errors
+    /// Only what the per-slot path itself returns. A batch failure is a routing
+    /// decision, not an outcome: the per-slot read is the ground truth and it
+    /// is about to run. A node that cannot serve the block still errors — from
+    /// [`Self::get_storage_at`], with that call's error, exactly as it did
+    /// before batching existed.
+    pub async fn read_storage_slots(
+        &self,
+        address: Address,
+        slots: &[U256],
+        block_number: BlockNumber,
+    ) -> Result<Vec<B256>> {
+        let batch_size = crate::DEFAULT_STATE_OVERRIDE_BATCH_SIZE as usize;
+        let mut out = Vec::with_capacity(slots.len());
+        for chunk in slots.chunks(batch_size.max(1)) {
+            match self.try_batched(|| self.get_storage_at_many(address, chunk, block_number)).await
+            {
+                Some(values) => out.extend(values),
+                None => {
+                    let reads =
+                        chunk.iter().map(|slot| self.get_storage_at(address, *slot, block_number));
+                    for word in futures::future::try_join_all(reads).await? {
+                        out.push(B256::from(word.to_be_bytes::<32>()));
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Read many account balances, batched when the endpoint allows it and one
+    /// at a time when it does not. See [`Self::read_storage_slots`] for the
+    /// shape and the error rule.
+    ///
+    /// # Errors
+    /// As [`Self::read_storage_slots`], from [`Self::get_balance`].
+    pub async fn read_balances(
+        &self,
+        addresses: &[Address],
+        block_number: BlockNumber,
+    ) -> Result<Vec<U256>> {
+        let batch_size = crate::DEFAULT_STATE_OVERRIDE_BATCH_SIZE as usize;
+        let mut out = Vec::with_capacity(addresses.len());
+        for chunk in addresses.chunks(batch_size.max(1)) {
+            match self.try_batched(|| self.get_balances_many(chunk, block_number)).await {
+                Some(values) => out.extend(values),
+                None => {
+                    let reads = chunk.iter().map(|a| self.get_balance(*a, block_number));
+                    out.extend(futures::future::try_join_all(reads).await?);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    // There is deliberately no `read_code_sizes` / `read_code_hashes` here.
+    // Neither has an exact per-call equivalent to fall back to:
+    // `eth_getCode(...).len()` matches `EXTCODESIZE`, but `EXTCODEHASH` returns
+    // zero for an account that does not exist and `keccak256("")` for one that
+    // exists with no code, and `eth_getCode` answers `0x` for both. A fallback
+    // that silently collapsed those two would be exactly the kind of
+    // plausible-but-wrong value this module exists to prevent, so a caller who
+    // wants those readers must handle the demotion knowing what it costs.
+
+    /// One batched attempt against the run-level verdict, or `None` when the
+    /// caller should read one at a time.
+    ///
+    /// Holds the whole policy for the many-words-per-row callers, so
+    /// [`Self::read_storage_slots`] and [`Self::read_balances`] do not each
+    /// re-derive it: skip when ruled out, serialise the run's first attempt,
+    /// record what came back, and swallow the batch error — because the caller
+    /// is about to get the same rows from the path that cannot be wrong.
+    async fn try_batched<T, F, Fut>(&self, attempt: F) -> Option<Vec<T>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<T>>>,
+    {
+        let support = &self.state_override_support;
+        if !support.worth_attempting() {
+            return None
+        }
+        let gate = support.gate_first_attempt().await;
+        if !support.worth_attempting() {
+            return None
+        }
+        let result = attempt().await;
+        drop(gate);
+        match result {
+            Ok(values) => {
+                support.record_supported();
+                Some(values)
+            }
+            Err(e) => {
+                if override_unavailable(&e) {
+                    support.rule_out();
+                }
+                None
+            }
+        }
+    }
+
+    /// Read many account balances in a single request.
+    ///
+    /// Unlike [`Self::get_storage_at_many`] this touches no real contract:
+    /// `BALANCE` takes its account from the stack, so the extractor runs at
+    /// [`crate::types::state_override::SCRATCH_ADDRESS`] and the calldata names
+    /// the accounts. One request therefore covers arbitrarily many unrelated
+    /// addresses.
+    ///
+    /// Returns balances in `addresses` order.
+    ///
+    /// # Errors
+    /// Returns [`CollectError::CollectError`] if any address is one the reader
+    /// refuses (see [`StateReader::refuses_target`]) or if the return length
+    /// shows the override was ignored.
+    pub async fn get_balances_many(
+        &self,
+        addresses: &[Address],
+        block_number: BlockNumber,
+    ) -> Result<Vec<U256>> {
+        let words = self.read_accounts_many(StateReader::Balance, addresses, block_number).await?;
+        Ok(words.into_iter().map(|w| U256::from_be_bytes(w.0)).collect())
+    }
+
+    /// Read many account code sizes in a single request. See
+    /// [`Self::get_balances_many`] for the shape and the error conditions.
+    ///
+    /// # Errors
+    /// As [`Self::get_balances_many`].
+    pub async fn get_code_sizes_many(
+        &self,
+        addresses: &[Address],
+        block_number: BlockNumber,
+    ) -> Result<Vec<u64>> {
+        let words = self.read_accounts_many(StateReader::CodeSize, addresses, block_number).await?;
+        // EXTCODESIZE is bounded by EIP-170's 24576-byte limit, so the word
+        // always fits a u64; saturate rather than wrap if a chain ever lifts it.
+        Ok(words.into_iter().map(|w| U256::from_be_bytes(w.0).saturating_to::<u64>()).collect())
+    }
+
+    /// Read many account code hashes in a single request. See
+    /// [`Self::get_balances_many`] for the shape and the error conditions.
+    ///
+    /// # Errors
+    /// As [`Self::get_balances_many`].
+    pub async fn get_code_hashes_many(
+        &self,
+        addresses: &[Address],
+        block_number: BlockNumber,
+    ) -> Result<Vec<B256>> {
+        self.read_accounts_many(StateReader::CodeHash, addresses, block_number).await
+    }
+
+    /// Shared body of the account-reading batch helpers.
+    async fn read_accounts_many(
+        &self,
+        reader: StateReader,
+        addresses: &[Address],
+        block_number: BlockNumber,
+    ) -> Result<Vec<B256>> {
+        // The extractor executes *at* the scratch address, so that one account
+        // reads back as our injected code rather than as the chain has it. The
+        // collision is absurdly unlikely and entirely silent, so it is refused
+        // here and the caller routes the row through the per-call path.
+        if let Some((clash, why)) =
+            addresses.iter().find_map(|a| reader.refuses_target(*a).map(|w| (a, w)))
+        {
+            return Err(CollectError::CollectError(format!(
+                "cannot batch-read {clash} with the {reader:?} extractor: {why}"
+            )));
+        }
+        let words: Vec<U256> =
+            addresses.iter().map(|a| U256::from_be_slice(a.as_slice())).collect();
+        let (call_data, overrides, to) = reader.request(Address::ZERO, &words);
+        let output =
+            self.call_with_overrides(to, call_data.into(), overrides, block_number).await?;
+        reader.decode_response(&output, addresses.len())
     }
 
     /// Return output data of a contract call
@@ -1359,6 +1760,17 @@ fn parse_geth_diff_object(map: serde_json::Map<String, serde_json::Value>) -> Re
         .map_err(|_| err("cannot deserialize pre diff"))?;
 
     Ok(DiffMode { pre, post })
+}
+
+/// Whether an error is the endpoint asking for less traffic rather than
+/// refusing the request.
+///
+/// A throttle is the one failure that must not be counted against a fast path:
+/// every fast path demotes to something that sends *more* requests, so treating
+/// a `429` as evidence of missing support makes the throttling worse.
+fn is_retry_error(error: &CollectError) -> bool {
+    let CollectError::ProviderError(rpc_err) = error else { return false };
+    rpc_err.as_error_resp().is_some_and(|payload| payload.is_retry_err())
 }
 
 #[cfg(test)]

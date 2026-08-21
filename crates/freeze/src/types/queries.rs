@@ -34,6 +34,42 @@ pub struct Query {
     /// [`DEFAULT_MULTICALL_BATCH_SIZE`](crate::DEFAULT_MULTICALL_BATCH_SIZE)
     /// when constructed via the CLI / Python bindings.
     pub multicall_batch_size: u32,
+    /// Read storage slots / balances in bulk through `eth_call` state overrides.
+    ///
+    /// When true, datasets that implement
+    /// [`StateOverrideBatchable`](crate::types::state_override::StateOverrideBatchable)
+    /// group their rows by `(block, contract)` and read each group with one
+    /// `eth_call` carrying an extractor-bytecode `code` override, instead of one
+    /// `eth_getStorageAt` / `eth_getBalance` per row. Any batch that fails —
+    /// including on an endpoint that rejects or ignores overrides — degrades to
+    /// the per-row path, so leaving this on cannot change results, only the
+    /// number of requests it takes to get them.
+    pub batch_state_reads: bool,
+    /// Words per state-override extractor call.
+    ///
+    /// Only meaningful when [`batch_state_reads`](Self::batch_state_reads) is true.
+    /// Defaults to
+    /// [`DEFAULT_STATE_OVERRIDE_BATCH_SIZE`](crate::types::state_override::DEFAULT_STATE_OVERRIDE_BATCH_SIZE)
+    /// when zero.
+    pub state_override_batch_size: u32,
+    /// Send many identical JSON-RPC calls per HTTP request.
+    ///
+    /// When true, datasets that implement
+    /// [`RpcBatchable`](crate::types::rpc_batch::RpcBatchable) pack their rows
+    /// into JSON-RPC batch envelopes — one HTTP request carrying N embedded
+    /// calls — instead of one request per row. `blocks`, `nonces` and `codes`
+    /// take this route.
+    ///
+    /// Deliberately separate from
+    /// [`batch_state_reads`](Self::batch_state_reads). A state override needs a
+    /// node that honours the third `eth_call` parameter, which not every
+    /// endpoint does; a JSON-RPC batch needs nothing beyond JSON-RPC itself. An
+    /// operator who distrusts an endpoint's override support has no reason to
+    /// give up plain batching as well.
+    ///
+    /// A batch that fails falls back to the per-row path, so this changes how
+    /// many requests the results cost, never the results.
+    pub batch_rpc_calls: bool,
     /// When true, mark the entire Multicall3 batch as failed if any inner call reverts.
     ///
     /// When false (the default), inner reverts are returned as `None` in

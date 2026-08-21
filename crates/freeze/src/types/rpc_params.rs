@@ -1,7 +1,7 @@
 use crate::{err, CollectError};
 use alloy::{
     primitives::{Address, BlockNumber, B256},
-    rpc::types::{Filter, FilterBlockOption},
+    rpc::types::{Filter, FilterBlockOption, Log},
 };
 
 /// Left-pad an address-shaped partition dim (`from_address` / `to_address`) into
@@ -85,6 +85,16 @@ impl Params {
         self.call_data.clone().ok_or(err("call_data not specified"))
     }
 
+    /// from address
+    pub fn from_address(&self) -> Result<Vec<u8>, CollectError> {
+        self.from_address.clone().ok_or(err("from_address not specified"))
+    }
+
+    /// to address
+    pub fn to_address(&self) -> Result<Vec<u8>, CollectError> {
+        self.to_address.clone().ok_or(err("to_address not specified"))
+    }
+
     //
     // ethers versions
     //
@@ -118,6 +128,24 @@ impl Params {
         fixed_from_slice(&self.contract()?, "contract")
     }
 
+    /// ethers from address
+    ///
+    /// # Errors
+    /// Errors if `from_address` is unset, or is not exactly 20 bytes. The CLI
+    /// hex-decodes `--from-address` without a length check, so the width is
+    /// validated here rather than panicking in `Address::from_slice`.
+    pub fn ethers_from_address(&self) -> Result<Address, CollectError> {
+        fixed_from_slice(&self.from_address()?, "from_address")
+    }
+
+    /// ethers to address
+    ///
+    /// # Errors
+    /// Errors if `to_address` is unset, or is not exactly 20 bytes.
+    pub fn ethers_to_address(&self) -> Result<Address, CollectError> {
+        fixed_from_slice(&self.to_address()?, "to_address")
+    }
+
     /// log filter
     ///
     /// # Errors
@@ -147,6 +175,48 @@ impl Params {
             filter = filter.topic3(fixed_from_slice::<B256>(topic3, "topic3")?);
         }
         Ok(filter)
+    }
+}
+
+/// True iff `log`'s topic at `idx` equals `want` (`None` ⇒ unconstrained).
+///
+/// For the `--topic0..3` dims only, where the scalar path compares the user's
+/// bytes to a topic verbatim. A non-32-byte value cannot equal any topic and so
+/// matches nothing here — but it never reaches this point, because
+/// `build_union_filter`'s `request.ethers_log_filter()?` already rejected it.
+/// True iff `log` was emitted by `want` (`None` ⇒ unconstrained).
+///
+/// The `--address` / `--contract` dim, which the by-block path pins at the RPC
+/// through `Filter::address`. A value that is not exactly 20 bytes matches
+/// nothing here; `ethers_log_filter` errors on the same input, so neither path
+/// returns rows for it.
+pub(crate) fn log_address_matches(log: &Log, want: &Option<Vec<u8>>) -> bool {
+    match want {
+        None => true,
+        Some(bytes) => bytes.len() == 20 && log.address() == Address::from_slice(bytes),
+    }
+}
+
+pub(crate) fn topic_matches(log: &Log, idx: usize, want: &Option<Vec<u8>>) -> bool {
+    match want {
+        None => true,
+        Some(bytes) => log.topics().get(idx).is_some_and(|t| t.as_slice() == bytes.as_slice()),
+    }
+}
+
+/// Like [`topic_matches`], but for the address-shaped dims (`--from-address`,
+/// `--to-address`), which the CLI stores at whatever width the user typed.
+///
+/// Compares against the left-padded 32-byte form, which is exactly what the
+/// scalar extractors put into their RPC filter via [`address_dim_as_topic`]. A
+/// value wider than 32 bytes matches nothing; the scalar path errors on the same
+/// input, so neither returns rows.
+pub(crate) fn address_topic_matches(log: &Log, idx: usize, want: &Option<Vec<u8>>) -> bool {
+    match want {
+        None => true,
+        Some(bytes) => {
+            address_dim_as_topic(bytes).is_some_and(|t| log.topics().get(idx) == Some(&t))
+        }
     }
 }
 

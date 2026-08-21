@@ -125,6 +125,8 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
         l1_provider,
         l1_chain_id,
         l1_rpc_url,
+        state_override_support: Arc::new(Default::default()),
+        storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         beacon,
     };
 

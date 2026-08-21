@@ -90,11 +90,11 @@ pub struct Args {
     #[arg(short, long, help_heading = "Source Options")]
     pub rpc: Option<String>,
 
-    /// L1 (settlement) RPC url for L2 datasets that read L1-side events.
+    /// L1 (settlement) RPC url, reserved for L2 datasets that read L1-side events.
     ///
-    /// Required by datasets like `op_batch_submissions`, `arb_retryable_tickets`,
-    /// `zks_l1_batches`, `l1_to_l2_inbox`, `l2_output_roots_on_l1` and the pan-L2
-    /// `blob_sidecars` table. Ignored when the active dataset is L2-only.
+    /// No dataset reads it yet. It connects and reports its chain id so the
+    /// plumbing stays exercised, and is otherwise inert. The help text here
+    /// used to name six such datasets, none of which exist.
     #[arg(long, value_name = "URL", help_heading = "Source Options")]
     pub l1_rpc: Option<String>,
 
@@ -336,6 +336,58 @@ pub struct Args {
     /// null)
     #[arg(long, help_heading = "Dataset-specific Options")]
     pub multicall_require_success: bool,
+
+    /// Disable `eth_call` state-override reads for `slots` / `balances` / `proxy_slots`.
+    ///
+    /// On by default. Replaces the target's code with a small extractor loop
+    /// that answers a whole batch of slots (or balances) in one request,
+    /// instead of one `eth_getStorageAt` / `eth_getBalance` per row.
+    ///
+    /// Turn this off for an endpoint you do not trust to honour the third
+    /// `eth_call` parameter. Plain JSON-RPC batching is a separate switch
+    /// (`--no-batch-rpc-calls`) because it asks nothing of the node.
+    ///
+    /// A batch that fails falls back to one request per row, so this switch
+    /// cannot change results — only how many requests they cost.
+    #[arg(
+        long = "no-batch-state-reads",
+        action = clap_cryo::ArgAction::SetFalse,
+        default_value_t = true,
+        help_heading = "Dataset-specific Options"
+    )]
+    pub batch_state_reads: bool,
+
+    /// Slots / addresses per state-override call (0 = the dataset's own default).
+    ///
+    /// Applies to the extractor path only (`slots`, `balances`, `proxy_slots`); the JSON-RPC
+    /// batch path used by `blocks`, `codes` and `nonces` negotiates its own size
+    /// with the provider.
+    ///
+    /// The default is 1000, chosen from measurement rather than the gas ceiling:
+    /// 10,000 slots in one call works but a 20,000-slot request is refused for
+    /// payload size, and ten parallel 1000-slot calls finish sooner than one
+    /// 10,000-slot call. Raise it when pointing at your own node.
+    #[arg(long, value_name = "N", default_value_t = 0, help_heading = "Dataset-specific Options")]
+    pub state_override_batch_size: u32,
+
+    /// Disable JSON-RPC request batching for `blocks` / `nonces` / `codes`.
+    ///
+    /// On by default. Packs many identical calls into one HTTP request — 100
+    /// `eth_getBlockByNumber` calls in one envelope rather than 100 requests.
+    /// It needs nothing from the node beyond JSON-RPC itself, which is why it
+    /// is a separate switch from `--no-batch-state-reads`.
+    ///
+    /// The batch size negotiates itself downward when a provider refuses one
+    /// (OP Mainnet answers `413` above ten calls), and a batch that still fails
+    /// falls back to one request per row. Turn this off only for an endpoint
+    /// that mishandles batch envelopes outright.
+    #[arg(
+        long = "no-batch-rpc-calls",
+        action = clap_cryo::ArgAction::SetFalse,
+        default_value_t = true,
+        help_heading = "Dataset-specific Options"
+    )]
+    pub batch_rpc_calls: bool,
 }
 
 impl Args {

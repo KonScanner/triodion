@@ -1,6 +1,6 @@
 use crate::*;
 use alloy::{
-    primitives::{keccak256, Address, Bytes, TxKind},
+    primitives::{keccak256, Bytes, TxKind},
     rpc::types::{TransactionInput, TransactionRequest},
 };
 use polars::prelude::*;
@@ -78,7 +78,7 @@ impl CollectByTransaction for EthCalls {
 impl MulticallBatchable for EthCalls {
     fn calls_for_row(params: &Params, require_success: bool) -> R<Vec<Multicall3::Call3>> {
         Ok(vec![Multicall3::Call3 {
-            target: Address::from_slice(&params.contract()?),
+            target: params.ethers_contract()?,
             allowFailure: !require_success,
             callData: Bytes::from(params.call_data()?),
         }])

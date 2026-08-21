@@ -199,6 +199,15 @@ pub fn _freeze(
             multicall,
             multicall_batch_size,
             multicall_require_success,
+            // Request-batching switches, not yet exposed as Python keyword
+            // arguments. They are set to the same defaults the CLI uses so a
+            // programmatic run batches exactly like a `triodion` run; none of
+            // them can change results, only how many requests those results
+            // cost, because every batch path falls back to one request per row
+            // on failure. `0` means "use the dataset's own default size".
+            batch_state_reads: true,
+            batch_rpc_calls: true,
+            state_override_batch_size: 0,
             // Backwards-compat CLI alias for the legacy `--multicall` flag — accepted as
             // a no-op so the field is wired but unread. The Python entrypoint sets it to
             // false; the canonical `multicall` field above carries the real value.

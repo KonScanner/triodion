@@ -1,4 +1,7 @@
-use crate::*;
+use crate::{
+    types::rpc_params::{address_topic_matches, log_address_matches},
+    *,
+};
 use alloy::{
     primitives::U256,
     rpc::types::{Filter, Log, Topic},
@@ -99,7 +102,21 @@ impl CollectByTransaction for Erc20Transfers {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let logs = source.get_transaction_logs(request.transaction_hash()?).await?;
-        Ok(logs.into_iter().filter(is_erc20_transfer).collect())
+        // The dims never reach the node on this path: `--txs` asks for one
+        // transaction's whole receipt, so the narrowing the by-block path pins
+        // into the `eth_getLogs` filter has to be re-applied here. Without it a
+        // dim is accepted, counted into the partition set, printed in the run
+        // summary, and then ignored — the run returns rows it was asked to
+        // exclude and says nothing.
+        Ok(logs
+            .into_iter()
+            .filter(|log| {
+                is_erc20_transfer(log) &&
+                    log_address_matches(log, &request.address) &&
+                    address_topic_matches(log, 1, &request.from_address) &&
+                    address_topic_matches(log, 2, &request.to_address)
+            })
+            .collect())
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

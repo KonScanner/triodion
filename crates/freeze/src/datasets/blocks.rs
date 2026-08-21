@@ -1,6 +1,7 @@
 use crate::*;
-use alloy::{primitives::U256, rpc::types::BlockTransactionsKind};
+use alloy::{eips::BlockNumberOrTag, primitives::U256, rpc::types::BlockTransactionsKind};
 use polars::prelude::*;
+use std::collections::HashMap;
 
 /// columns for transactions
 #[triodion_macros::to_df(Datatype::Blocks)]
@@ -85,6 +86,19 @@ impl CollectByBlock for Blocks {
         let schema = query.schemas.get_schema(&Datatype::Blocks)?;
         process_block(response, columns, schema)
     }
+
+    async fn collect_by_block(
+        partition: Partition,
+        source: Arc<Source>,
+        query: Arc<Query>,
+        inner_request_size: Option<u64>,
+    ) -> R<HashMap<Datatype, DataFrame>> {
+        if query.batch_rpc_calls {
+            rpc_batch_collect_by_block::<Self>(partition, source, query, inner_request_size).await
+        } else {
+            default_collect_by_block::<Self>(partition, source, query, inner_request_size).await
+        }
+    }
 }
 
 impl CollectByTransaction for Blocks {
@@ -108,6 +122,42 @@ impl CollectByTransaction for Blocks {
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
         let schema = query.schemas.get_schema(&Datatype::Blocks)?;
         process_block(response, columns, schema)
+    }
+}
+
+/// A hundred headers per request instead of a hundred requests.
+///
+/// Every row of this dataset is one block, and the per-row path spends one
+/// `eth_getBlockByNumber` on each — so a year of mainnet is 2.6 million HTTP
+/// requests to fetch 2.6 million headers that would fit in 26,000 of them. No
+/// state override is involved and no aggregator contract exists for headers;
+/// the whole win is in the envelope.
+///
+/// `fullTransactions` stays `false`, matching [`CollectByBlock::extract`]:
+/// this dataset stores the transaction *root*, never the bodies, so asking for
+/// them would multiply the response size for columns nothing reads.
+///
+/// A block the node does not have comes back as JSON `null`, which is why
+/// [`Self::Item`] is an `Option`. That is a real answer to a real question, not
+/// a transport failure, so it becomes the same "block not found" error the
+/// per-row path raises rather than demoting the whole chunk to retry it.
+impl RpcBatchable for Blocks {
+    type Param = (BlockNumberOrTag, bool);
+    type Item = Option<RpcBlock>;
+
+    fn method() -> &'static str {
+        "eth_getBlockByNumber"
+    }
+
+    fn param_for_row(params: &Params) -> R<Self::Param> {
+        Ok((BlockNumberOrTag::Number(params.block_number()?), false))
+    }
+
+    fn decode_row(params: &Params, item: Self::Item) -> R<Self::Response> {
+        item.ok_or_else(|| {
+            let n = params.block_number.map_or("?".to_string(), |n| n.to_string());
+            CollectError::CollectError(format!("block not found: {n}"))
+        })
     }
 }
 

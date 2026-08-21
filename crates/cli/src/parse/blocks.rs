@@ -439,6 +439,8 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            state_override_support: Arc::new(Default::default()),
+            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             beacon: None,
         };
         let source = Arc::new(source);
@@ -505,6 +507,8 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            state_override_support: Arc::new(Default::default()),
+            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             beacon: None,
         });
         for (test, res) in tests {
@@ -582,6 +586,8 @@ mod tests {
             l1_provider: None,
             l1_chain_id: None,
             l1_rpc_url: None,
+            state_override_support: Arc::new(Default::default()),
+            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             beacon: None,
         };
         let source = Arc::new(source);

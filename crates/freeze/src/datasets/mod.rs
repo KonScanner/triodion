@@ -2,6 +2,8 @@
 pub mod access_lists;
 /// address appearances
 pub mod address_appearances;
+/// ERC-721 / ERC-1155 ApprovalForAll events
+pub mod approvals_for_all;
 /// authorizations
 pub mod authorizations;
 /// balance diffs
@@ -24,11 +26,19 @@ pub mod code_reads;
 pub mod codes;
 /// consolidation requests
 pub mod consolidation_requests;
+/// ERC-165 interface probing
+pub mod contract_interfaces;
 /// contracts
 pub mod contracts;
 /// deposit requests
 pub mod deposit_requests;
-/// erc20 approval
+/// ERC-1155 URI events
+pub mod erc1155_metadata;
+/// ERC-1155 transfers
+pub mod erc1155_transfers;
+/// erc20 allowances
+pub mod erc20_allowances;
+/// erc20 approvals
 pub mod erc20_approvals;
 /// erc20 balances
 pub mod erc20_balances;
@@ -40,10 +50,18 @@ pub mod erc20_supplies;
 pub mod erc20_transfers;
 /// erc20 wrapper events (Deposit / Withdrawal)
 pub mod erc20_wrapper_events;
+/// ERC-2612 permit nonces
+pub mod erc2612_nonces;
+/// ERC-4626 vault metadata
+pub mod erc4626_metadata;
+/// ERC-4626 vault events
+pub mod erc4626_vault_events;
 /// erc721 metadata
 pub mod erc721_metadata;
 /// erc721 transfers
 pub mod erc721_transfers;
+/// ERC-777 transfers
+pub mod erc777_transfers;
 /// eth calls
 pub mod eth_calls;
 /// four byte counts
@@ -72,6 +90,10 @@ pub mod nonce_diffs;
 pub mod nonce_reads;
 /// nonces
 pub mod nonces;
+/// ERC-1967 proxy slots
+pub mod proxy_slots;
+/// ERC-1967 proxy upgrade events
+pub mod proxy_upgrades;
 /// slots
 pub mod slots;
 /// storage diffs
@@ -90,9 +112,9 @@ pub mod vm_traces;
 pub mod withdrawal_requests;
 /// withdrawals
 pub mod withdrawals;
-
 pub use access_lists::*;
 pub use address_appearances::*;
+pub use approvals_for_all::*;
 pub use authorizations::*;
 pub use balance_diffs::*;
 pub use balance_reads::*;
@@ -103,16 +125,24 @@ pub use code_diffs::*;
 pub use code_reads::*;
 pub use codes::*;
 pub use consolidation_requests::*;
+pub use contract_interfaces::*;
 pub use contracts::*;
 pub use deposit_requests::*;
+pub use erc1155_metadata::*;
+pub use erc1155_transfers::*;
+pub use erc20_allowances::*;
 pub use erc20_approvals::*;
 pub use erc20_balances::*;
 pub use erc20_metadata::*;
 pub use erc20_supplies::*;
 pub use erc20_transfers::*;
 pub use erc20_wrapper_events::*;
+pub use erc2612_nonces::*;
+pub use erc4626_metadata::*;
+pub use erc4626_vault_events::*;
 pub use erc721_metadata::*;
 pub use erc721_transfers::*;
+pub use erc777_transfers::*;
 pub use eth_calls::*;
 pub use four_byte_counts::*;
 pub use geth_balance_diffs::*;
@@ -127,6 +157,8 @@ pub use native_transfers::*;
 pub use nonce_diffs::*;
 pub use nonce_reads::*;
 pub use nonces::*;
+pub use proxy_slots::*;
+pub use proxy_upgrades::*;
 pub use slots::*;
 pub use storage_diffs::*;
 pub use storage_reads::*;

@@ -9,7 +9,7 @@
 
 
 # uniswap v2 pools
-cryo logs \
+triodion logs \
     --label uniswap_v2_pools \
     --blocks 10M: \
     --reorg-buffer 1000 \
@@ -19,7 +19,7 @@ cryo logs \
     --topic0 0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9
 
 # uniswap v3 pools
-cryo logs \
+triodion logs \
     --label uniswap_v3_pools \
     --blocks 12.369M: \
     --reorg-buffer 1000 \
@@ -29,7 +29,7 @@ cryo logs \
     --topic0 0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118
 
 # uniswap v2 swaps
-cryo logs \
+triodion logs \
     --label uniswap_v2_swaps \
     --blocks 10M: \
     --reorg-buffer 1000 \
@@ -38,7 +38,7 @@ cryo logs \
     --topic0 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
 
 # uniswap v3 swaps
-cryo logs \
+triodion logs \
     --label uniswap_v3_swaps \
     --blocks 12.369M: \
     --reorg-buffer 1000 \

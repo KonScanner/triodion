@@ -110,8 +110,12 @@ pub struct Args {
     ///
     /// Beacon nodes only serve blob sidecars for ~18 days. Pass an archive to
     /// reach older blobs; `--blob-archive default` uses the public Blobscan
-    /// API. Without one, historical blob queries return nothing rather than
-    /// silently reporting a block as blob-free.
+    /// API. Without one, historical blob queries error rather than silently
+    /// reporting a block as blob-free.
+    ///
+    /// Usable on its own, without `--beacon-rpc`: an archive is keyed by
+    /// execution block number and reports each blob's slot itself, so it needs
+    /// no slot clock. It cannot serve blob bytes, only their commitments.
     #[arg(long, value_name = "URL", help_heading = "Source Options")]
     pub blob_archive: Option<String>,
 

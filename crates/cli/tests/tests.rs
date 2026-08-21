@@ -1,10 +1,10 @@
 /*
 
 ## commands
-cryo blocks
-cryo transactions
-cryo logs
-cryo traces
+triodion blocks
+triodion transactions
+triodion logs
+triodion traces
 
 output formats
 --hex

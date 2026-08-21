@@ -20,9 +20,14 @@
 //! `MIN_EPOCHS_FOR_BLOB_SIDECARS_REQUESTS` epochs — 4096, about 18 days. Older
 //! blobs are not "slow to fetch", they are gone. Measured against a public
 //! Lighthouse node: slot 9,204,782 (execution block 20,000,000, June 2024)
-//! returns an empty list, while a blob archive still has it. That is why
-//! [`BeaconSource`] takes two endpoints and falls back, and why it records
-//! which one answered rather than presenting them as interchangeable.
+//! answers `403 Forbidden` — not an empty list, and not a 404 — while a blob
+//! archive still has it. That is why [`BeaconSource`] takes two endpoints and
+//! falls back, and why it records which one answered rather than presenting
+//! them as interchangeable.
+//!
+//! A 403 is indistinguishable from a genuine auth failure at this layer, so it
+//! is only swallowed when an archive can answer instead. See
+//! [`BeaconSource::blobs_for_block`].
 
 use crate::{err, CollectError, R};
 use alloy::transports::http::reqwest;
@@ -226,7 +231,13 @@ pub struct BeaconSource {
     /// Base URL of a blob archive that serves slots the node has pruned.
     archive_url: Option<String>,
     /// Chain parameters, read from the node at construction.
-    pub config: BeaconConfig,
+    ///
+    /// `None` for an archive-only run (`--blob-archive` without
+    /// `--beacon-rpc`). The archive is keyed by execution block number and
+    /// reports the slot itself, so it needs no slot clock — and there is no
+    /// authority to read one from, which is why this is absent rather than
+    /// filled with mainnet's constants.
+    pub config: Option<BeaconConfig>,
     semaphore: Arc<Option<Semaphore>>,
 }
 
@@ -249,17 +260,17 @@ impl BeaconSource {
         let beacon_url = beacon_url.map(|url| url.trim_end_matches('/').to_string());
         let archive_url = archive_url.map(|url| url.trim_end_matches('/').to_string());
 
+        if beacon_url.is_none() && archive_url.is_none() {
+            return Err(err("beacon datasets need --beacon-rpc or --blob-archive"))
+        }
+
+        // The slot clock is read from the node, never assumed: guessing
+        // mainnet's constants would produce slot numbers that are silently
+        // wrong on every other chain. An archive-only run simply has no clock,
+        // and does not need one.
         let config = match &beacon_url {
-            Some(url) => Self::read_config(&client, url).await?,
-            // Without a beacon node there is no authority for the slot clock.
-            // Refusing here beats guessing mainnet's constants and producing
-            // slot numbers that are silently wrong on every other chain.
-            None => {
-                return Err(err(
-                    "beacon datasets need --beacon-rpc: the slot clock is read from the node, \
-                     not assumed",
-                ))
-            }
+            Some(url) => Some(Self::read_config(&client, url).await?),
+            None => None,
         };
 
         Ok(Self { client, beacon_url, archive_url, config, semaphore })

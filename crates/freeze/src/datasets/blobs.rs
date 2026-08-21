@@ -80,8 +80,12 @@ impl Dataset for Blobs {
     }
 }
 
-/// A block, its derived slot, and the blobs published in it.
-pub type BlockAndBlobs = (RpcBlock, Option<u64>, Vec<BlobRecord>);
+/// A block, its derived slot and epoch, and the blobs published in it.
+///
+/// Slot and epoch are computed in `extract`, where the chain's own slot clock
+/// is in hand. `None` for an archive-only run, which has no beacon node to read
+/// a clock from — the archive reports each blob's slot itself.
+pub type BlockAndBlobs = (RpcBlock, Option<u64>, Option<u64>, Vec<BlobRecord>);
 
 impl CollectByBlock for Blobs {
     type Response = BlockAndBlobs;
@@ -98,19 +102,15 @@ impl CollectByBlock for Blobs {
             .await?
             .ok_or_else(|| err("block not found"))?;
 
-        let slot = beacon.config.slot_at_timestamp(block.header.timestamp);
+        let slot = beacon.config.as_ref().and_then(|c| c.slot_at_timestamp(block.header.timestamp));
+        let epoch = slot.zip(beacon.config.as_ref()).map(|(slot, c)| c.epoch_of_slot(slot));
         let blobs = beacon.blobs_for_block(block.header.number, slot).await?;
-        Ok((block, slot, blobs))
+        Ok((block, slot, epoch, blobs))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
         let schema = query.schemas.get_schema(&Datatype::Blobs)?;
-        let (block, slot, blobs) = response;
-        let epoch = slot.map(|slot| {
-            // `epoch_of_slot` needs the config; recompute from the same source
-            // the slot came from rather than assuming 32 slots per epoch.
-            slot / SLOTS_PER_EPOCH_FALLBACK
-        });
+        let (block, slot, epoch, blobs) = response;
         let carriers = blob_carriers(&block);
         let timestamp = block.header.timestamp as u32;
         let block_number = block.header.number as u32;
@@ -148,11 +148,6 @@ impl CollectByBlock for Blobs {
 impl CollectByTransaction for Blobs {
     type Response = ();
 }
-
-/// Only used to derive `epoch` when the caller did not keep the beacon config
-/// to hand. Every chain in the wild uses 32, and a wrong epoch is a derived
-/// convenience rather than a primary key — `slot` is the real one.
-const SLOTS_PER_EPOCH_FALLBACK: u64 = 32;
 
 /// The transaction that committed to a blob.
 #[derive(Clone, Debug)]

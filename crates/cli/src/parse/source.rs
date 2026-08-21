@@ -98,7 +98,7 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
                 url
             }
         });
-    let beacon = if beacon_rpc.is_some() {
+    let beacon = if beacon_rpc.is_some() || blob_archive.is_some() {
         Some(Arc::new(
             triodion_core::BeaconSource::connect(beacon_rpc, blob_archive, semaphore.clone())
                 .await

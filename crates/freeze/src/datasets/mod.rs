@@ -1,11 +1,17 @@
+/// access lists
+pub mod access_lists;
 /// address appearances
 pub mod address_appearances;
+/// authorizations
+pub mod authorizations;
 /// balance diffs
 pub mod balance_diffs;
 /// balance reads
 pub mod balance_reads;
 /// balances
 pub mod balances;
+/// shared fetch path for the EIP-7685 request datasets
+pub mod beacon_requests;
 /// blobs
 pub mod blobs;
 /// blocks
@@ -16,8 +22,12 @@ pub mod code_diffs;
 pub mod code_reads;
 /// codes
 pub mod codes;
+/// consolidation requests
+pub mod consolidation_requests;
 /// contracts
 pub mod contracts;
+/// deposit requests
+pub mod deposit_requests;
 /// erc20 approval
 pub mod erc20_approvals;
 /// erc20 balances
@@ -76,8 +86,14 @@ pub mod traces;
 pub mod transactions;
 /// vm traces
 pub mod vm_traces;
+/// withdrawal requests
+pub mod withdrawal_requests;
+/// withdrawals
+pub mod withdrawals;
 
+pub use access_lists::*;
 pub use address_appearances::*;
+pub use authorizations::*;
 pub use balance_diffs::*;
 pub use balance_reads::*;
 pub use balances::*;
@@ -86,7 +102,9 @@ pub use blocks::*;
 pub use code_diffs::*;
 pub use code_reads::*;
 pub use codes::*;
+pub use consolidation_requests::*;
 pub use contracts::*;
+pub use deposit_requests::*;
 pub use erc20_approvals::*;
 pub use erc20_balances::*;
 pub use erc20_metadata::*;
@@ -116,3 +134,5 @@ pub use trace_calls::*;
 pub use traces::*;
 pub use transactions::*;
 pub use vm_traces::*;
+pub use withdrawal_requests::*;
+pub use withdrawals::*;

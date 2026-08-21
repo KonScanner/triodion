@@ -222,6 +222,123 @@ pub struct BeaconBlockHeader {
     pub body_root: Vec<u8>,
 }
 
+/// EIP-7685 execution requests, as a beacon block body reports them.
+///
+/// The execution layer commits to these in the header as `requests_hash`, but
+/// it does not serve the bodies: `eth_getBlockByNumber` carries the commitment
+/// and nothing else. The consensus block is where the decoded requests live,
+/// which is why the three request datasets need `--beacon-rpc` while every
+/// other execution-layer dataset does not.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ExecutionRequests {
+    /// EIP-6110 deposit requests.
+    #[serde(default)]
+    pub deposits: Vec<DepositRequest>,
+    /// EIP-7002 withdrawal requests, triggered from the execution layer.
+    #[serde(default)]
+    pub withdrawals: Vec<WithdrawalRequest>,
+    /// EIP-7251 consolidation requests.
+    #[serde(default)]
+    pub consolidations: Vec<ConsolidationRequest>,
+}
+
+/// An EIP-6110 deposit request.
+#[derive(Clone, Debug, Deserialize)]
+pub struct DepositRequest {
+    /// BLS public key of the validator being deposited to, 48 bytes.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub pubkey: Vec<u8>,
+    /// Withdrawal credentials, 32 bytes. The first byte is the type prefix:
+    /// `0x00` BLS, `0x01` execution address, `0x02` compounding.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub withdrawal_credentials: Vec<u8>,
+    /// Deposit amount in gwei.
+    #[serde(deserialize_with = "decimal::u64")]
+    pub amount: u64,
+    /// BLS signature over the deposit message, 96 bytes.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub signature: Vec<u8>,
+    /// Position in the deposit contract's global, monotonic sequence.
+    #[serde(deserialize_with = "decimal::u64")]
+    pub index: u64,
+}
+
+/// An EIP-7002 withdrawal request.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WithdrawalRequest {
+    /// Execution address that submitted the request, 20 bytes.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub source_address: Vec<u8>,
+    /// BLS public key of the validator to withdraw from, 48 bytes.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub validator_pubkey: Vec<u8>,
+    /// Amount in gwei. Zero is not "nothing": it is the encoding for a full
+    /// exit, as opposed to a partial withdrawal of a stated amount.
+    #[serde(deserialize_with = "decimal::u64")]
+    pub amount: u64,
+}
+
+/// An EIP-7251 consolidation request.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ConsolidationRequest {
+    /// Execution address that submitted the request, 20 bytes.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub source_address: Vec<u8>,
+    /// BLS public key of the validator being consolidated away, 48 bytes.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub source_pubkey: Vec<u8>,
+    /// BLS public key of the validator being consolidated into, 48 bytes.
+    /// Equal to `source_pubkey` when the request is a `0x01` to `0x02`
+    /// credential upgrade rather than a move between validators.
+    #[serde(deserialize_with = "hex_bytes")]
+    pub target_pubkey: Vec<u8>,
+}
+
+/// One beacon block, reduced to what the request datasets read from it.
+#[derive(Clone, Debug)]
+pub struct BeaconBlockRequests {
+    /// Slot the block was proposed for.
+    pub slot: u64,
+    /// Validator index of the proposer.
+    pub proposer_index: u64,
+    /// The requests themselves.
+    ///
+    /// `None` before Electra, where the concept did not exist. That is not the
+    /// same as an empty list, which means the slot carried no requests.
+    pub requests: Option<ExecutionRequests>,
+}
+
+#[derive(Deserialize)]
+struct SignedBeaconBlock {
+    message: BeaconBlockMessage,
+}
+
+#[derive(Deserialize)]
+struct BeaconBlockMessage {
+    #[serde(deserialize_with = "decimal::u64")]
+    slot: u64,
+    #[serde(deserialize_with = "decimal::u64")]
+    proposer_index: u64,
+    body: BeaconBlockBody,
+}
+
+#[derive(Deserialize)]
+struct BeaconBlockBody {
+    // Absent before Bellatrix, where a slot had no execution block at all.
+    // Blinded blocks carry a header instead of the payload; both state the
+    // execution block number, which is all this needs.
+    execution_payload: Option<ExecutionPayloadSummary>,
+    execution_payload_header: Option<ExecutionPayloadSummary>,
+    // Absent before Electra.
+    execution_requests: Option<ExecutionRequests>,
+}
+
+#[derive(Deserialize)]
+struct ExecutionPayloadSummary {
+    #[serde(deserialize_with = "decimal::u64")]
+    block_number: u64,
+}
+
 /// Access to a consensus-layer node, and optionally a blob archive.
 #[derive(Clone, Debug)]
 pub struct BeaconSource {
@@ -404,6 +521,85 @@ impl BeaconSource {
             (Some(url), _) => self.archive_blobs(url, block_number).await,
             (None, Some(e)) => Err(e),
             (None, None) => Ok(Vec::new()),
+        }
+    }
+
+    /// The EIP-7685 execution requests published in one execution block.
+    ///
+    /// The execution layer commits to these and does not serve them: a block
+    /// response carries `requests_hash` and no bodies. The consensus block is
+    /// the only source, so this needs `--beacon-rpc` and has no archive path.
+    ///
+    /// Reads the *blinded* block first. It carries the same
+    /// `execution_requests` and the same execution block number as the full
+    /// block, without embedding the execution payload — 15 KB against 389 KB
+    /// on a measured mainnet slot. Falls back to the full block for nodes that
+    /// do not serve the blinded endpoint.
+    ///
+    /// Returns `None` when the slot predates Electra, where execution requests
+    /// did not exist. That is deliberately distinct from `Some` holding empty
+    /// lists, which means the slot carried none.
+    ///
+    /// # Errors
+    /// A transport failure; a slot the node has no block for; or a slot whose
+    /// beacon block reports a different execution block than the one asked
+    /// about, which would mean the derived slot had drifted off the chain.
+    pub async fn execution_requests_for_block(
+        &self,
+        block_number: u64,
+        slot: u64,
+    ) -> R<Option<BeaconBlockRequests>> {
+        let url = self.beacon_url.as_ref().ok_or_else(|| {
+            err("execution requests need --beacon-rpc: the execution layer serves requests_hash but never the requests themselves")
+        })?;
+
+        let block = match self.beacon_block(url, "eth/v1/beacon/blinded_blocks", slot).await {
+            Ok(Some(block)) => Some(block),
+            // A node that does not implement the blinded endpoint answers the
+            // same way for every slot, so this is a capability fallback rather
+            // than a retry. The full block is asked for either way.
+            Ok(None) | Err(_) => self.beacon_block(url, "eth/v2/beacon/blocks", slot).await?,
+        };
+        let block = block.ok_or_else(|| {
+            CollectError::CollectError(format!(
+                "beacon node has no block for slot {slot}. A checkpoint-synced node without \
+                 backfill holds nothing before its checkpoint"
+            ))
+        })?;
+
+        let message = block.message;
+        // Pre-Electra: the concept did not exist at this height. No rows, and
+        // no block-number check, because there is nothing to attribute.
+        let Some(requests) = message.body.execution_requests else { return Ok(None) };
+
+        // The slot came from a timestamp. If that derivation ever drifted, the
+        // requests would be filed under the wrong block silently, so make the
+        // consensus block state its own execution block and compare.
+        let payload = message.body.execution_payload.or(message.body.execution_payload_header);
+        if let Some(payload) = payload {
+            if payload.block_number != block_number {
+                return Err(CollectError::CollectError(format!(
+                    "slot {slot} carries execution block {}, not {block_number}",
+                    payload.block_number
+                )))
+            }
+        }
+
+        Ok(Some(BeaconBlockRequests {
+            slot: message.slot,
+            proposer_index: message.proposer_index,
+            requests: Some(requests),
+        }))
+    }
+
+    /// Fetch one beacon block, treating "no block at this slot" as `None`.
+    async fn beacon_block(&self, url: &str, path: &str, slot: u64) -> R<Option<SignedBeaconBlock>> {
+        let _permit = self.permit().await;
+        let url = format!("{url}/{path}/{slot}");
+        match Self::get_json::<Envelope<SignedBeaconBlock>>(&self.client, &url).await {
+            Ok(envelope) => Ok(Some(envelope.data)),
+            Err(e) if is_not_found(&e) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 

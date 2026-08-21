@@ -3,7 +3,9 @@ use polars::prelude::*;
 use std::collections::HashMap;
 
 define_datatypes!(
+    AccessLists,
     AddressAppearances,
+    Authorizations,
     BalanceDiffs,
     BalanceReads,
     Balances,
@@ -12,7 +14,9 @@ define_datatypes!(
     CodeDiffs,
     CodeReads,
     Codes,
+    ConsolidationRequests,
     Contracts,
+    DepositRequests,
     Erc20Balances,
     Erc20Metadata,
     Erc20Supplies,
@@ -42,6 +46,8 @@ define_datatypes!(
     TraceCalls,
     Transactions,
     VmTraces,
+    WithdrawalRequests,
+    Withdrawals,
 );
 
 impl Datatype {

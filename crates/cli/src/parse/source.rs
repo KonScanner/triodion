@@ -2,14 +2,14 @@ use std::env;
 
 use crate::args::Args;
 use alloy::{
-    providers::{Provider, ProviderBuilder, RootProvider},
+    providers::Provider,
     rpc::client::{BuiltInConnectionString, ClientBuilder, RpcClient},
     transports::layers::RetryBackoffLayer,
 };
 use governor::{Quota, RateLimiter};
 use polars::prelude::*;
 use std::num::NonZeroU32;
-use triodion_core::{ParseError, Source, SourceLabels};
+use triodion_core::{ParseError, Source, SourceLabels, TriodionProvider};
 
 pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
     // parse network info
@@ -25,7 +25,10 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
         .connect_with(connect)
         .await
         .map_err(ParseError::ProviderError)?;
-    let provider: RootProvider = ProviderBuilder::default().connect_client(client);
+    // `AnyNetwork`, not `Ethereum`: see `triodion_core::types::chains`. An
+    // Ethereum-typed provider cannot deserialize a block from any OP-stack or
+    // Arbitrum-stack chain.
+    let provider = TriodionProvider::new(client);
     let chain_id = provider.get_chain_id().await.map_err(ParseError::ProviderError)?;
     let rate_limiter = match args.requests_per_second {
         Some(rate_limit) => match (NonZeroU32::new(1), NonZeroU32::new(rate_limit)) {
@@ -74,7 +77,7 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
             .connect_with(l1_connect)
             .await
             .map_err(ParseError::ProviderError)?;
-        let l1_provider: RootProvider = ProviderBuilder::default().connect_client(l1_client);
+        let l1_provider = TriodionProvider::new(l1_client);
         let l1_chain_id = l1_provider.get_chain_id().await.map_err(ParseError::ProviderError)?;
         (Some(l1_provider), Some(l1_chain_id), Some(url))
     } else {

@@ -1,8 +1,5 @@
 use crate::*;
-use alloy::{
-    primitives::U256,
-    rpc::types::{Block, BlockTransactionsKind},
-};
+use alloy::{primitives::U256, rpc::types::BlockTransactionsKind};
 use polars::prelude::*;
 
 /// columns for transactions
@@ -36,6 +33,23 @@ pub struct Blocks {
     // "0 because no withdrawals this block" from "0 because pre-fork".
     withdrawals_count: Vec<u32>,
     withdrawals_amount_gwei: Vec<u64>,
+    // EIP-4844 (Cancun). `None` before the fork, and on chains that never
+    // enabled blobs — never 0, which would claim the block posted no blob gas
+    // when in fact the concept did not exist.
+    blob_gas_used: Vec<Option<u64>>,
+    excess_blob_gas: Vec<Option<u64>>,
+    // EIP-4788 (Cancun): the beacon block root of the parent slot, which is
+    // what lets an execution-layer query join to consensus-layer state.
+    parent_beacon_block_root: Vec<Option<Vec<u8>>>,
+    // EIP-7685 (Prague): commitment over the block's execution requests
+    // (EIP-6110 deposits, EIP-7002 withdrawals, EIP-7251 consolidations).
+    requests_hash: Vec<Option<Vec<u8>>>,
+    // Arbitrum-only header fields. See `types::chains::arbitrum`.
+    // `l1_block_number` is the L1 block this L2 block was sequenced against;
+    // `send_root` / `send_count` track the L2->L1 outbox accumulator.
+    l1_block_number: Vec<Option<u64>>,
+    send_root: Vec<Option<Vec<u8>>>,
+    send_count: Vec<Option<u64>>,
     chain_id: Vec<u64>,
 }
 
@@ -57,7 +71,7 @@ impl Dataset for Blocks {
 }
 
 impl CollectByBlock for Blocks {
-    type Response = Block;
+    type Response = RpcBlock;
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let block = source
@@ -74,7 +88,7 @@ impl CollectByBlock for Blocks {
 }
 
 impl CollectByTransaction for Blocks {
-    type Response = Block;
+    type Response = RpcBlock;
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let transaction = source
@@ -98,8 +112,19 @@ impl CollectByTransaction for Blocks {
 }
 
 /// process block into columns
-pub(crate) fn process_block<TX>(block: Block<TX>, columns: &mut Blocks, schema: &Table) -> R<()> {
+///
+/// Takes an [`RpcBlock`] (alloy's `AnyRpcBlock`) rather than an
+/// `Ethereum`-typed `Block`, so the same function serves mainnet, the OP stack
+/// and the Arbitrum stack. Fields the chain does not define are read as `None`
+/// out of the header's optional fields or the block's extra-fields map.
+pub(crate) fn process_block(block: RpcBlock, columns: &mut Blocks, schema: &Table) -> R<()> {
     columns.n_rows += 1;
+
+    // Chain-specific header fields ride in the block's extra-fields map:
+    // `AnyHeader` is `#[serde(flatten)]`ed into the block object, so anything
+    // it does not name lands here rather than being dropped.
+    let extra = block.other.clone();
+    let block = block.into_inner();
 
     store!(schema, columns, block_hash, Some(block.header.hash.to_vec()));
     store!(schema, columns, parent_hash, block.header.parent_hash.0.to_vec());
@@ -123,8 +148,10 @@ pub(crate) fn process_block<TX>(block: Block<TX>, columns: &mut Blocks, schema: 
     store!(schema, columns, total_difficulty, block.header.total_difficulty);
     store!(schema, columns, base_fee_per_gas, block.header.base_fee_per_gas);
     store!(schema, columns, size, block.header.size.map(|v| v.wrapping_to::<u64>()));
-    store!(schema, columns, mix_hash, Some(block.header.mix_hash.to_vec()));
-    store!(schema, columns, nonce, Some(block.header.nonce.0.to_vec()));
+    // `mix_hash` and `nonce` are `Option` on a cross-chain header: Arbitrum
+    // reuses both for its own bookkeeping and some chains omit them outright.
+    store!(schema, columns, mix_hash, block.header.mix_hash.map(|x| x.to_vec()));
+    store!(schema, columns, nonce, block.header.nonce.map(|x| x.0.to_vec()));
     store!(schema, columns, withdrawals_root, block.header.withdrawals_root.map(|x| x.0.to_vec()));
     let (w_count, w_amount) = match block.withdrawals.as_ref() {
         Some(ws) => (ws.len() as u32, ws.iter().map(|w| w.amount).sum::<u64>()),
@@ -132,5 +159,81 @@ pub(crate) fn process_block<TX>(block: Block<TX>, columns: &mut Blocks, schema: 
     };
     store!(schema, columns, withdrawals_count, w_count);
     store!(schema, columns, withdrawals_amount_gwei, w_amount);
+
+    store!(schema, columns, blob_gas_used, block.header.blob_gas_used);
+    store!(schema, columns, excess_blob_gas, block.header.excess_blob_gas);
+    store!(
+        schema,
+        columns,
+        parent_beacon_block_root,
+        block.header.parent_beacon_block_root.map(|x| x.0.to_vec())
+    );
+    store!(schema, columns, requests_hash, block.header.requests_hash.map(|x| x.0.to_vec()));
+
+    store!(schema, columns, l1_block_number, other_u64(&extra, arbitrum::L1_BLOCK_NUMBER));
+    store!(schema, columns, send_root, other_bytes(&extra, arbitrum::SEND_ROOT));
+    store!(schema, columns, send_count, other_u64(&extra, arbitrum::SEND_COUNT));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::wire_fixtures::{arbitrum_one_block, op_mainnet_block};
+
+    fn collect(json: serde_json::Value) -> Blocks {
+        let block: RpcBlock = serde_json::from_value(json).expect("block fixture deserializes");
+        let schema = Datatype::Blocks
+            .table_schema(
+                &[U256Type::String],
+                &ColumnEncoding::Hex,
+                &None,
+                &None,
+                &Some(vec!["all".to_string()]),
+                None,
+                None,
+            )
+            .expect("every column is nameable");
+        let mut columns = Blocks::default();
+        process_block(block, &mut columns, &schema).expect("header maps to columns");
+        columns
+    }
+
+    #[test]
+    fn an_op_stack_header_carries_the_cancun_fields() {
+        let columns = collect(op_mainnet_block());
+        assert_eq!(columns.n_rows, 1);
+        assert_eq!(columns.blob_gas_used[0], Some(0));
+        assert_eq!(columns.excess_blob_gas[0], Some(0));
+        assert!(columns.parent_beacon_block_root[0].is_some());
+        // Arbitrum-only fields stay null on an OP-stack chain.
+        assert_eq!(columns.send_root[0], None);
+        assert_eq!(columns.l1_block_number[0], None);
+    }
+
+    #[test]
+    fn an_arbitrum_header_carries_its_own_fields_and_omits_the_cancun_ones() {
+        let columns = collect(arbitrum_one_block());
+        assert_eq!(columns.l1_block_number[0], Some(19_662_017));
+        assert_eq!(columns.send_count[0], Some(115_724));
+        assert_eq!(
+            columns.send_root[0].as_ref().map(alloy::hex::encode),
+            Some("f0f401b0308982116f63f8af9eac3d2ddf7545cfab79a3e132538c36c1036557".to_string())
+        );
+        // Arbitrum never enabled blobs or EIP-4788. `None`, not `0`: the block
+        // did not spend zero blob gas, the concept does not exist there.
+        assert_eq!(columns.blob_gas_used[0], None);
+        assert_eq!(columns.parent_beacon_block_root[0], None);
+        assert_eq!(columns.requests_hash[0], None);
+    }
+
+    #[test]
+    fn an_arbitrum_header_keeps_its_optional_nonce_and_mix_hash() {
+        // These are `Option` on a cross-chain header. Arbitrum populates both,
+        // with its own meanings, so a `None` here would be a silent loss.
+        let columns = collect(arbitrum_one_block());
+        assert!(columns.mix_hash[0].is_some());
+        assert!(columns.nonce[0].is_some());
+    }
 }

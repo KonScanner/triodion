@@ -52,7 +52,7 @@ impl CollectByTransaction for BlocksAndTransactions {
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
         let BlocksAndTransactions(blocks, transactions) = columns;
         let (block, ((tx, receipt), _, exclude_failed, timestamp)) = response;
-        let gas_price = transactions::get_gas_price(&block, &tx);
+        let base_fee_per_gas = block.header.base_fee_per_gas;
         let schema = query.schemas.get_schema(&Datatype::Blocks)?;
         blocks::process_block(block, blocks, schema)?;
         let schema = query.schemas.get_schema(&Datatype::Transactions)?;
@@ -63,7 +63,7 @@ impl CollectByTransaction for BlocksAndTransactions {
             schema,
             exclude_failed,
             timestamp,
-            gas_price,
+            base_fee_per_gas,
         )?;
         Ok(())
     }

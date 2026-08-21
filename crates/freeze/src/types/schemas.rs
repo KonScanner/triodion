@@ -257,9 +257,16 @@ mod tests {
         let table = Datatype::Blocks
             .table_schema(&get_u256_types(), &ColumnEncoding::Hex, &None, &None, &cols, None, None)
             .unwrap();
-        assert_eq!(23, table.columns().len());
+        // 23 -> 30: EIP-4844 (`blob_gas_used`, `excess_blob_gas`), EIP-4788
+        // (`parent_beacon_block_root`), EIP-7685 (`requests_hash`) and the
+        // three Arbitrum header fields (`l1_block_number`, `send_root`,
+        // `send_count`).
+        assert_eq!(30, table.columns().len());
         assert!(table.columns().contains(&"block_hash"));
         assert!(table.columns().contains(&"transactions_root"));
+        assert!(table.columns().contains(&"blob_gas_used"));
+        assert!(table.columns().contains(&"parent_beacon_block_root"));
+        assert!(table.columns().contains(&"send_root"));
     }
 
     #[test]
@@ -308,9 +315,16 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(23, table.columns().len());
+        // 23 -> 30: EIP-4844 (`blob_gas_used`, `excess_blob_gas`), EIP-4788
+        // (`parent_beacon_block_root`), EIP-7685 (`requests_hash`) and the
+        // three Arbitrum header fields (`l1_block_number`, `send_root`,
+        // `send_count`).
+        assert_eq!(30, table.columns().len());
         assert!(table.columns().contains(&"block_hash"));
         assert!(table.columns().contains(&"transactions_root"));
+        assert!(table.columns().contains(&"blob_gas_used"));
+        assert!(table.columns().contains(&"parent_beacon_block_root"));
+        assert!(table.columns().contains(&"send_root"));
     }
 
     #[test]

@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use alloy::{
     eips::BlockNumberOrTag,
+    network::TransactionResponse,
     primitives::{Address, BlockNumber, Bytes, TxHash, B256, U256},
     providers::{
         ext::{DebugApi, TraceApi},
-        Provider, ProviderBuilder, RootProvider,
+        Provider, RootProvider,
     },
     rpc::types::{
         trace::{
@@ -19,9 +20,10 @@ use alloy::{
                 LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
             },
         },
-        Block, BlockTransactions, BlockTransactionsKind, Filter, Log, Transaction,
-        TransactionInput, TransactionReceipt, TransactionRequest,
+        BlockTransactions, BlockTransactionsKind, Filter, Log, TransactionInput,
+        TransactionRequest,
     },
+    serde::WithOtherFields,
     transports::{http::reqwest::Url, RpcError, TransportErrorKind},
 };
 use governor::{
@@ -33,7 +35,10 @@ use governor::{
 use std::num::NonZeroU32;
 use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
 
-use crate::CollectError;
+use crate::{
+    types::chains::{RpcBlock, RpcReceipt, RpcTransaction, TriodionProvider},
+    CollectError,
+};
 
 /// RateLimiter based on governor crate
 pub type RateLimiter = governor::RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
@@ -42,7 +47,12 @@ pub type RateLimiter = governor::RateLimiter<NotKeyed, InMemoryState, DefaultClo
 #[derive(Clone, Debug)]
 pub struct Source {
     /// provider for the primary (L2 or L1) RPC
-    pub provider: RootProvider,
+    ///
+    /// Typed on [`TriodionNetwork`] (alloy's `AnyNetwork`) rather than
+    /// `Ethereum`: an `Ethereum`-typed provider cannot deserialize a block
+    /// containing an OP deposit or an Arbitrum internal transaction, which is
+    /// every block on those chains. See [`crate::types::chains`].
+    pub provider: TriodionProvider,
     /// chain_id of primary network
     pub chain_id: u64,
     /// number of blocks per log request
@@ -65,7 +75,7 @@ pub struct Source {
     /// `semaphore` and `rate_limiter` gate calls on both providers — this is
     /// intentionally simple for now; a future change may give the L1 path
     /// its own bucket.
-    pub l1_provider: Option<RootProvider>,
+    pub l1_provider: Option<TriodionProvider>,
     /// chain_id reported by the L1 RPC. `None` if `l1_provider` is `None`.
     pub l1_chain_id: Option<u64>,
     /// rpc url passed via `--l1-rpc`. `None` if not configured.
@@ -75,10 +85,7 @@ pub struct Source {
 impl Source {
     /// Returns all receipts for a block.
     /// Tries to use `eth_getBlockReceipts` first, and falls back to `eth_getTransactionReceipt`
-    pub async fn get_tx_receipts_in_block(
-        &self,
-        block: &Block<Transaction>,
-    ) -> Result<Vec<TransactionReceipt>> {
+    pub async fn get_tx_receipts_in_block(&self, block: &RpcBlock) -> Result<Vec<RpcReceipt>> {
         let block_number = block.header.number;
         if let Ok(Some(receipts)) = self.get_block_receipts(block_number).await {
             return Ok(receipts);
@@ -89,17 +96,17 @@ impl Source {
 
     /// Returns all receipts for vector of transactions.
     ///
-    /// Issues a single JSON-RPC batch with one `eth_getTransactionReceipt`
-    /// per transaction hash (see [`Self::get_transaction_receipts_batch`])
-    /// — one HTTP round-trip instead of N. Errors if any receipt is
-    /// missing (the per-call path used to error there too).
+    /// Issues one `eth_getTransactionReceipt` per transaction hash, batched
+    /// (see [`Self::get_transaction_receipts_batch`]) rather than one HTTP
+    /// round-trip each. Errors if any receipt is missing (the per-call path
+    /// used to error there too).
     pub async fn get_tx_receipts(
         &self,
-        transactions: BlockTransactions<Transaction>,
-    ) -> Result<Vec<TransactionReceipt>> {
+        transactions: BlockTransactions<RpcTransaction>,
+    ) -> Result<Vec<RpcReceipt>> {
         let hashes: Vec<TxHash> = transactions
             .as_transactions()
-            .map(|txs| txs.iter().map(|tx| *tx.inner.tx_hash()).collect())
+            .map(|txs| txs.iter().map(|tx| tx.tx_hash()).collect())
             .unwrap_or_default();
         let receipts = self.get_transaction_receipts_batch(hashes).await?;
         receipts
@@ -110,47 +117,93 @@ impl Source {
             .collect()
     }
 
-    /// Fetch transaction receipts for many hashes in a single JSON-RPC batch.
+    /// Fetch transaction receipts for many hashes, in as few round-trips as
+    /// the provider will allow.
     ///
-    /// Sends one HTTP request carrying N embedded `eth_getTransactionReceipt`
-    /// calls and returns the parallel list of receipts. Compared to the
-    /// per-hash fan-out used previously (N `tokio::spawn`'d tasks, each a
-    /// separate HTTP call), this is one round-trip instead of N — the
-    /// structural win is largest when N is big (e.g. block.transactions.len()
-    /// on a busy mainnet block, often > 100).
-    ///
-    /// Acquires a single semaphore permit for the whole batch; callers
-    /// wanting stricter throttling should chunk the input and call this
-    /// once per chunk.
+    /// Sends `eth_getTransactionReceipt` calls in JSON-RPC batches rather than
+    /// one HTTP request per hash. See [`Self::send_batch`] for how the batch
+    /// size adapts.
     ///
     /// # Errors
-    /// - Transport failure on the batch envelope itself.
+    /// - Transport failure on a batch envelope that is not about batch size.
     /// - Individual missing receipts surface as `None` in the returned vector, not as errors —
     ///   callers can map `None` to the semantics they want.
     pub async fn get_transaction_receipts_batch(
         &self,
         hashes: Vec<TxHash>,
-    ) -> Result<Vec<Option<TransactionReceipt>>> {
-        if hashes.is_empty() {
+    ) -> Result<Vec<Option<RpcReceipt>>> {
+        let params: Vec<(TxHash,)> = hashes.into_iter().map(|h| (h,)).collect();
+        self.send_batch("eth_getTransactionReceipt", &params).await
+    }
+
+    /// Send one logical batch of identical calls, splitting it as needed.
+    ///
+    /// Starts at [`DEFAULT_RPC_BATCH_SIZE`] calls per HTTP request. If the
+    /// provider rejects a batch *because of its size* — and only then, see
+    /// [`batch_too_large`] — the size is halved and the remaining work retried,
+    /// down to one call per request. The chosen size persists for the rest of
+    /// this call, so a 200-receipt block against a ten-call provider pays the
+    /// discovery cost once rather than per batch.
+    ///
+    /// Results come back in request order. One semaphore permit is taken per
+    /// HTTP request, so a split batch is throttled like the several requests it
+    /// has become.
+    ///
+    /// # Errors
+    /// Any transport failure that is not a size complaint, and a size complaint
+    /// that persists at one call per request.
+    async fn send_batch<P, T>(&self, method: &'static str, params: &[P]) -> Result<Vec<T>>
+    where
+        P: alloy::rpc::json_rpc::RpcSend,
+        T: alloy::rpc::json_rpc::RpcRecv,
+    {
+        let mut out: Vec<T> = Vec::with_capacity(params.len());
+        let mut size = DEFAULT_RPC_BATCH_SIZE;
+        let mut sent = 0usize;
+        while sent < params.len() {
+            let end = (sent + size).min(params.len());
+            match self.send_one_batch::<P, T>(method, &params[sent..end]).await {
+                Ok(results) => {
+                    out.extend(results);
+                    sent = end;
+                }
+                Err(e) if size > 1 && batch_too_large(&e) => {
+                    size = size.div_ceil(2);
+                }
+                Err(e) => {
+                    return Err(CollectError::CollectError(format!("{method} batch failed: {e:?}")))
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// One HTTP request carrying `params.len()` embedded calls.
+    ///
+    /// Returns the raw transport error so [`Self::send_batch`] can tell a size
+    /// complaint from a real failure; every other caller sees a `CollectError`.
+    async fn send_one_batch<P, T>(
+        &self,
+        method: &'static str,
+        params: &[P],
+    ) -> ::core::result::Result<Vec<T>, RpcError<TransportErrorKind>>
+    where
+        P: alloy::rpc::json_rpc::RpcSend,
+        T: alloy::rpc::json_rpc::RpcRecv,
+    {
+        if params.is_empty() {
             return Ok(Vec::new())
         }
         let _permit = self.permit_request().await;
         let mut batch = alloy::rpc::client::BatchRequest::new(self.provider.client());
-        let mut waiters: Vec<alloy::rpc::client::Waiter<Option<TransactionReceipt>>> =
-            Vec::with_capacity(hashes.len());
-        for h in &hashes {
-            let w = batch
-                .add_call("eth_getTransactionReceipt", &(*h,))
-                .map_err(|e| CollectError::CollectError(format!("batch add_call failed: {e:?}")))?;
-            waiters.push(w);
+        let mut waiters: Vec<alloy::rpc::client::Waiter<T>> = Vec::with_capacity(params.len());
+        for p in params {
+            waiters.push(batch.add_call(method, p)?);
         }
-        batch.await.map_err(|e| CollectError::CollectError(format!("batch send failed: {e:?}")))?;
+        batch.await?;
         let mut out = Vec::with_capacity(waiters.len());
         for w in waiters {
-            let r = w
-                .await
-                .map_err(|e| CollectError::CollectError(format!("batch waiter failed: {e:?}")))?;
-            out.push(r);
+            out.push(w.await?);
         }
         Ok(out)
     }
@@ -166,30 +219,9 @@ impl Source {
     pub async fn get_transactions_by_hash_batch(
         &self,
         hashes: Vec<TxHash>,
-    ) -> Result<Vec<Option<Transaction>>> {
-        if hashes.is_empty() {
-            return Ok(Vec::new())
-        }
-        let _permit = self.permit_request().await;
-        let mut batch = alloy::rpc::client::BatchRequest::new(self.provider.client());
-        let mut waiters: Vec<alloy::rpc::client::Waiter<Option<Transaction>>> =
-            Vec::with_capacity(hashes.len());
-        for h in &hashes {
-            let w = batch
-                .add_call("eth_getTransactionByHash", &(*h,))
-                .map_err(|e| CollectError::CollectError(format!("batch add_call failed: {e:?}")))?;
-            waiters.push(w);
-        }
-        batch.await.map_err(|e| CollectError::CollectError(format!("batch send failed: {e:?}")))?;
-        let mut out = Vec::with_capacity(waiters.len());
-        for w in waiters {
-            out.push(
-                w.await.map_err(|e| {
-                    CollectError::CollectError(format!("batch waiter failed: {e:?}"))
-                })?,
-            );
-        }
-        Ok(out)
+    ) -> Result<Vec<Option<RpcTransaction>>> {
+        let params: Vec<(TxHash,)> = hashes.into_iter().map(|h| (h,)).collect();
+        self.send_batch("eth_getTransactionByHash", &params).await
     }
 
     /// Fetch many blocks (transaction hashes only) in a single JSON-RPC batch.
@@ -200,7 +232,7 @@ impl Source {
     ///
     /// # Errors
     /// Transport failure on the batch envelope.
-    pub async fn get_blocks_batch(&self, block_numbers: Vec<u64>) -> Result<Vec<Option<Block>>> {
+    pub async fn get_blocks_batch(&self, block_numbers: Vec<u64>) -> Result<Vec<Option<RpcBlock>>> {
         self.get_blocks_batch_impl(block_numbers, false).await
     }
 
@@ -215,7 +247,7 @@ impl Source {
     pub async fn get_full_blocks_batch(
         &self,
         block_numbers: Vec<u64>,
-    ) -> Result<Vec<Option<Block>>> {
+    ) -> Result<Vec<Option<RpcBlock>>> {
         self.get_blocks_batch_impl(block_numbers, true).await
     }
 
@@ -223,32 +255,13 @@ impl Source {
         &self,
         block_numbers: Vec<u64>,
         full_transactions: bool,
-    ) -> Result<Vec<Option<Block>>> {
-        if block_numbers.is_empty() {
-            return Ok(Vec::new())
-        }
-        let _permit = self.permit_request().await;
-        let mut batch = alloy::rpc::client::BatchRequest::new(self.provider.client());
-        let mut waiters: Vec<alloy::rpc::client::Waiter<Option<Block>>> =
-            Vec::with_capacity(block_numbers.len());
-        for n in &block_numbers {
-            // eth_getBlockByNumber expects a hex-encoded quantity as the first param.
-            let tag = BlockNumberOrTag::Number(*n);
-            let w = batch
-                .add_call("eth_getBlockByNumber", &(tag, full_transactions))
-                .map_err(|e| CollectError::CollectError(format!("batch add_call failed: {e:?}")))?;
-            waiters.push(w);
-        }
-        batch.await.map_err(|e| CollectError::CollectError(format!("batch send failed: {e:?}")))?;
-        let mut out = Vec::with_capacity(waiters.len());
-        for w in waiters {
-            out.push(
-                w.await.map_err(|e| {
-                    CollectError::CollectError(format!("batch waiter failed: {e:?}"))
-                })?,
-            );
-        }
-        Ok(out)
+    ) -> Result<Vec<Option<RpcBlock>>> {
+        // eth_getBlockByNumber expects a hex-encoded quantity as the first param.
+        let params: Vec<(BlockNumberOrTag, bool)> = block_numbers
+            .into_iter()
+            .map(|n| (BlockNumberOrTag::Number(n), full_transactions))
+            .collect();
+        self.send_batch("eth_getBlockByNumber", &params).await
     }
 
     /// Fetch traces for many transactions in a single JSON-RPC batch.
@@ -264,29 +277,8 @@ impl Source {
         &self,
         hashes: Vec<TxHash>,
     ) -> Result<Vec<Vec<LocalizedTransactionTrace>>> {
-        if hashes.is_empty() {
-            return Ok(Vec::new())
-        }
-        let _permit = self.permit_request().await;
-        let mut batch = alloy::rpc::client::BatchRequest::new(self.provider.client());
-        let mut waiters: Vec<alloy::rpc::client::Waiter<Vec<LocalizedTransactionTrace>>> =
-            Vec::with_capacity(hashes.len());
-        for h in &hashes {
-            let w = batch
-                .add_call("trace_transaction", &(*h,))
-                .map_err(|e| CollectError::CollectError(format!("batch add_call failed: {e:?}")))?;
-            waiters.push(w);
-        }
-        batch.await.map_err(|e| CollectError::CollectError(format!("batch send failed: {e:?}")))?;
-        let mut out = Vec::with_capacity(waiters.len());
-        for w in waiters {
-            out.push(
-                w.await.map_err(|e| {
-                    CollectError::CollectError(format!("batch waiter failed: {e:?}"))
-                })?,
-            );
-        }
-        Ok(out)
+        let params: Vec<(TxHash,)> = hashes.into_iter().map(|h| (h,)).collect();
+        self.send_batch("trace_transaction", &params).await
     }
 }
 
@@ -341,8 +333,7 @@ impl Source {
         let parsed_rpc_url: Url = rpc_url
             .parse()
             .map_err(|e| CollectError::CollectError(format!("invalid rpc url {rpc_url:?}: {e}")))?;
-        let provider: RootProvider =
-            ProviderBuilder::default().connect_http(parsed_rpc_url.clone());
+        let provider = TriodionProvider::new_http(parsed_rpc_url.clone());
         let chain_id = provider
             .get_chain_id()
             .await
@@ -376,7 +367,7 @@ impl Source {
                 RateLimiter::direct(quota)
             });
 
-        let provider: RootProvider = ProviderBuilder::default().connect_http(parsed_rpc_url);
+        let provider = TriodionProvider::new_http(parsed_rpc_url);
 
         let source = Source {
             provider,
@@ -414,7 +405,7 @@ impl Source {
         let parsed: Url = l1_rpc_url.parse().map_err(|e| {
             CollectError::CollectError(format!("invalid l1 rpc url {l1_rpc_url:?}: {e}"))
         })?;
-        let provider: RootProvider = ProviderBuilder::default().connect_http(parsed);
+        let provider = TriodionProvider::new_http(parsed);
         let chain_id = provider
             .get_chain_id()
             .await
@@ -432,7 +423,7 @@ impl Source {
     ///
     /// # Errors
     /// Returns [`CollectError::CollectError`] if `--l1-rpc` was not configured.
-    pub fn require_l1_provider(&self) -> Result<&RootProvider> {
+    pub fn require_l1_provider(&self) -> Result<&TriodionProvider> {
         self.l1_provider.as_ref().ok_or_else(|| {
             CollectError::CollectError(
                 "this dataset requires an L1 RPC: pass --l1-rpc <url>".to_string(),
@@ -515,6 +506,53 @@ pub struct Fetcher<N: alloy::providers::Network> {
 
 type Result<T> = ::core::result::Result<T, CollectError>;
 
+/// Largest number of calls triodion will put in one JSON-RPC batch.
+///
+/// A block's worth of receipts is one natural batch, but "a block's worth" is
+/// 200+ on a busy chain and public endpoints cap batches well below that — OP
+/// Mainnet's answers `413` above ten. This is the starting size; a rejection
+/// shrinks it for that call (see [`Source::send_batch`]).
+const DEFAULT_RPC_BATCH_SIZE: usize = 100;
+
+/// Whether a batch failure is the provider objecting to the batch's *size*.
+///
+/// The distinction matters because the correct response is opposite in each
+/// case: a size complaint should be retried smaller, while a rate limit, an
+/// auth failure or a dead node must propagate — retrying those smaller
+/// multiplies the traffic against a node that just said no. This is the same
+/// rule `types::multicall::batch_may_shrink_to_fit` applies to Multicall3
+/// aggregates, for the same reason.
+///
+/// Providers phrase the complaint differently and there is no code for it:
+/// OP Mainnet returns HTTP 413 with "To send batches over 10 items, …", Base
+/// returns `-32014 "maximum 10 calls in 1 batch"`, others say "batch too
+/// large". Rather than chase that wording, this treats *any* whole-batch
+/// failure that names the batch as a size complaint, having first excluded the
+/// two families where shrinking is actively harmful. The cost of a false
+/// positive is bounded — at most `log2(DEFAULT_RPC_BATCH_SIZE)` retries before
+/// the error propagates unchanged — and the cost of a false negative is a
+/// chain triodion simply cannot read.
+fn batch_too_large(error: &RpcError<TransportErrorKind>) -> bool {
+    if let RpcError::Transport(TransportErrorKind::HttpError(http)) = error {
+        // 413 Payload Too Large is the unambiguous signal.
+        if http.status == 413 {
+            return true
+        }
+        // Never shrink past an auth wall; the batch size is not the problem.
+        if http.status == 401 || http.status == 403 {
+            return false
+        }
+    }
+    // A throttled node wants FEWER requests, and splitting sends more. Checked
+    // before the text match because rate-limit messages mention batches too.
+    if error.as_error_resp().is_some_and(|payload| payload.is_retry_err()) {
+        return false
+    }
+    // Require the provider to be talking about the batch. Without this, a
+    // single call's "gas limit exceeded" would shrink batches forever.
+    error.to_string().to_ascii_lowercase().contains("batch")
+}
+
 // impl<P: JsonRpcClient> Fetcher<P> {
 impl Source {
     /// Returns an array (possibly empty) of logs that match the filter
@@ -558,6 +596,7 @@ impl Source {
                 .get_block(block as u64, BlockTransactionsKind::Hashes)
                 .await?
                 .ok_or(CollectError::CollectError("could not find block".to_string()))?
+                .into_inner()
                 .transactions;
             match transactions {
                 BlockTransactions::Hashes(hashes) => {
@@ -624,16 +663,13 @@ impl Source {
     }
 
     /// Gets the transaction with transaction_hash
-    pub async fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Result<Option<Transaction>> {
+    pub async fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Result<Option<RpcTransaction>> {
         let _permit = self.permit_request().await;
         Self::map_err(self.provider.get_transaction_by_hash(tx_hash).await)
     }
 
     /// Gets the transaction receipt with transaction_hash
-    pub async fn get_transaction_receipt(
-        &self,
-        tx_hash: TxHash,
-    ) -> Result<Option<TransactionReceipt>> {
+    pub async fn get_transaction_receipt(&self, tx_hash: TxHash) -> Result<Option<RpcReceipt>> {
         let _permit = self.permit_request().await;
         Self::map_err(self.provider.get_transaction_receipt(tx_hash).await)
     }
@@ -643,7 +679,7 @@ impl Source {
         &self,
         block_num: u64,
         kind: BlockTransactionsKind,
-    ) -> Result<Option<Block>> {
+    ) -> Result<Option<RpcBlock>> {
         let _permit = self.permit_request().await;
         Self::map_err(self.provider.get_block(block_num.into()).kind(kind).await)
     }
@@ -653,7 +689,7 @@ impl Source {
         &self,
         block_hash: B256,
         kind: BlockTransactionsKind,
-    ) -> Result<Option<Block>> {
+    ) -> Result<Option<RpcBlock>> {
         let _permit = self.permit_request().await;
         Self::map_err(self.provider.get_block(block_hash.into()).kind(kind).await)
     }
@@ -662,10 +698,7 @@ impl Source {
     /// Note that this uses the `eth_getBlockReceipts` method which is not supported by all nodes.
     /// Consider using `FetcherExt::get_tx_receipts_in_block` which takes a block, and falls back to
     /// `eth_getTransactionReceipt` if `eth_getBlockReceipts` is not supported.
-    pub async fn get_block_receipts(
-        &self,
-        block_num: u64,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    pub async fn get_block_receipts(&self, block_num: u64) -> Result<Option<Vec<RpcReceipt>>> {
         let _permit = self.permit_request().await;
         Self::map_err(self.provider.get_block_receipts(block_num.into()).await)
     }
@@ -695,7 +728,9 @@ impl Source {
         block_number: BlockNumber,
     ) -> Result<Bytes> {
         let _permit = self.permit_request().await;
-        Self::map_err(self.provider.call(transaction).block(block_number.into()).await)
+        Self::map_err(
+            self.provider.call(WithOtherFields::new(transaction)).block(block_number.into()).await,
+        )
     }
 
     /// Returns traces for given call data
@@ -705,6 +740,7 @@ impl Source {
         trace_type: Vec<TraceType>,
         block_number: Option<BlockNumber>,
     ) -> Result<TraceResults> {
+        let transaction = WithOtherFields::new(transaction);
         let _permit = self.permit_request().await;
         if let Some(bn) = block_number {
             return Self::map_err(
@@ -796,7 +832,9 @@ impl Source {
             ..Default::default()
         };
         let _permit = self.permit_request().await;
-        Self::map_err(self.provider.call(transaction).block(block_number.into()).await)
+        Self::map_err(
+            self.provider.call(WithOtherFields::new(transaction)).block(block_number.into()).await,
+        )
     }
 
     /// Return output data of a contract call
@@ -807,11 +845,11 @@ impl Source {
         trace_type: Vec<TraceType>,
         block_number: Option<BlockNumber>,
     ) -> Result<TraceResults> {
-        let transaction = TransactionRequest {
+        let transaction = WithOtherFields::new(TransactionRequest {
             to: Some(address.into()),
             input: TransactionInput::new(call_data.into()),
             ..Default::default()
-        };
+        });
         let _permit = self.permit_request().await;
         if let Some(bn) = block_number {
             Self::map_err(
@@ -1313,4 +1351,58 @@ fn parse_geth_diff_object(map: serde_json::Map<String, serde_json::Value>) -> Re
         .map_err(|_| err("cannot deserialize pre diff"))?;
 
     Ok(DiffMode { pre, post })
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use alloy::rpc::json_rpc::ErrorPayload;
+    use std::borrow::Cow;
+
+    fn error_resp(code: i64, message: &'static str) -> RpcError<TransportErrorKind> {
+        RpcError::ErrorResp(ErrorPayload { code, message: Cow::Borrowed(message), data: None })
+    }
+
+    #[test]
+    fn a_413_is_a_size_complaint() {
+        let error =
+            RpcError::Transport(TransportErrorKind::HttpError(alloy::transports::HttpError {
+                status: 413,
+                body: String::new(),
+            }));
+        assert!(batch_too_large(&error));
+    }
+
+    #[test]
+    fn the_op_mainnet_batch_cap_is_recognised() {
+        // Verbatim from https://mainnet.optimism.io, which caps batches at ten.
+        assert!(batch_too_large(&error_resp(
+            -32014,
+            "To send batches over 10 items, consider using a dedicated API provider",
+        )));
+    }
+
+    #[test]
+    fn the_base_batch_cap_is_recognised() {
+        // Verbatim from https://mainnet.base.org. Note it names no size word
+        // OP's message uses — "maximum", not "over" or "too many" — which is
+        // why this is a structural check and not a keyword list.
+        assert!(batch_too_large(&error_resp(-32014, "maximum 10 calls in 1 batch")));
+    }
+
+    #[test]
+    fn a_rate_limit_is_not_a_size_complaint() {
+        // 429 is the canonical retry code. Halving the batch here doubles the
+        // number of requests against a node that just asked for fewer — the
+        // exact amplification `types::multicall` was fixed to stop doing.
+        assert!(!batch_too_large(&error_resp(429, "batch rate limit exceeded, too many requests")));
+    }
+
+    #[test]
+    fn an_unrelated_limit_does_not_shrink_the_batch() {
+        // No mention of the batch: this is about one call, and retrying it in
+        // smaller batches would loop without ever addressing the cause.
+        assert!(!batch_too_large(&error_resp(-32000, "gas limit exceeded")));
+        assert!(!batch_too_large(&error_resp(-32602, "archive requests require a personal token")));
+    }
 }

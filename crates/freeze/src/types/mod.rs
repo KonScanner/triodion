@@ -1,4 +1,6 @@
 /// type specifications for triodion_core crate
+/// cross-chain-family plumbing (Ethereum / OP stack / Arbitrum stack)
+pub mod chains;
 /// type specifications for chunk types
 pub mod chunks;
 /// conversion operations
@@ -7,6 +9,9 @@ pub mod conversions;
 pub mod datatypes;
 /// type specifications for data sources
 pub mod sources;
+/// wire-format block fixtures shared by the dataset tests
+#[cfg(test)]
+pub(crate) mod wire_fixtures;
 
 /// column data specification
 pub mod columns;
@@ -52,6 +57,11 @@ pub mod schemas;
 /// types related to summaries
 pub mod summaries;
 
+pub use chains::{
+    arbitrum, is_reencodable, op, other_bool, other_bytes, other_decimal_f64, other_u256,
+    other_u64, ChainFamily, RpcBlock, RpcReceipt, RpcTransaction, TriodionNetwork,
+    TriodionProvider, TxExtras,
+};
 pub use chunks::{
     AddressChunk, BlockChunk, CallDataChunk, Chunk, ChunkData, ChunkStats, SlotChunk, Subchunk,
     TopicChunk, TransactionChunk,

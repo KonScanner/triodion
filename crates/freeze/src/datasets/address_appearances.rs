@@ -2,7 +2,7 @@ use crate::*;
 use alloy::{
     primitives::{Address, TxHash},
     rpc::types::{
-        eth::{Block, Log},
+        eth::Log,
         trace::parity::{Action, LocalizedTransactionTrace, TraceOutput},
         BlockTransactionsKind, Filter, FilterBlockOption,
     },
@@ -41,7 +41,7 @@ impl Dataset for AddressAppearances {
     }
 }
 
-type BlockLogsTraces = (Block, Vec<Log>, Vec<LocalizedTransactionTrace>);
+type BlockLogsTraces = (RpcBlock, Vec<Log>, Vec<LocalizedTransactionTrace>);
 
 impl CollectByBlock for AddressAppearances {
     type Response = BlockLogsTraces;

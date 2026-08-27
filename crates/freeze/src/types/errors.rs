@@ -79,7 +79,9 @@ pub enum CollectError {
     BadSchemaError,
 
     /// Error related to too many requests
-    #[error("try using a rate limit with --requests-per-second or limiting max concurrency with --max-concurrent-requests")]
+    #[error(
+        "try using a rate limit with --requests-per-second or limiting max concurrency with --max-concurrent-requests"
+    )]
     TooManyRequestsError,
 
     /// Generic RPC Error
@@ -247,11 +249,7 @@ impl CollectError {
         let contract_refused =
             EVM_FAILURE_MESSAGES.iter().any(|fragment| message.contains(fragment));
 
-        if contract_refused {
-            CallOutcome::ContractRefused
-        } else {
-            CallOutcome::NodeFailed
-        }
+        if contract_refused { CallOutcome::ContractRefused } else { CallOutcome::NodeFailed }
     }
 }
 

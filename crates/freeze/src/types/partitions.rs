@@ -1,6 +1,6 @@
 use crate::{
-    err, types::chunks::Subchunk, AddressChunk, BlockChunk, CallDataChunk, ChunkData, ChunkStats,
-    CollectError, Params, SlotChunk, TopicChunk, TransactionChunk,
+    AddressChunk, BlockChunk, CallDataChunk, ChunkData, ChunkStats, CollectError, Params,
+    SlotChunk, TopicChunk, TransactionChunk, err, types::chunks::Subchunk,
 };
 
 /// a dimension of chunking

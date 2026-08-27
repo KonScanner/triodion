@@ -214,8 +214,17 @@ impl CollectByBlock for ContractInterfaces {
         let schema = query.schemas.get_schema(&Datatype::ContractInterfaces)?;
         let (block, address, answers) = response;
         // Positional unpack, in `PROBES` order.
-        let [answers_true_to_everything, supports_erc165, supports_erc721, supports_erc721_metadata, supports_erc721_enumerable, supports_erc1155, supports_erc1155_metadata_uri, supports_erc2981, supports_erc1271] =
-            answers;
+        let [
+            answers_true_to_everything,
+            supports_erc165,
+            supports_erc721,
+            supports_erc721_metadata,
+            supports_erc721_enumerable,
+            supports_erc1155,
+            supports_erc1155_metadata_uri,
+            supports_erc2981,
+            supports_erc1271,
+        ] = answers;
         columns.n_rows += 1;
         store!(schema, columns, block_number, block);
         store!(schema, columns, address, address);

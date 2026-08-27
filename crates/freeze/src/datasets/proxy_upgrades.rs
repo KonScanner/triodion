@@ -310,7 +310,7 @@ fn process_proxy_upgrades(logs: Vec<Log>, columns: &mut ProxyUpgrades, schema: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Address, Bytes, B256};
+    use alloy::primitives::{Address, B256, Bytes};
 
     /// real `ProxyUpgrades` schema, so `store!` actually evaluates each column
     fn schema() -> Table {

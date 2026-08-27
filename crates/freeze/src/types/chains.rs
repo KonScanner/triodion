@@ -36,7 +36,7 @@
 
 use alloy::{
     network::AnyTxEnvelope,
-    primitives::{U256, U64},
+    primitives::{U64, U256},
     serde::OtherFields,
 };
 

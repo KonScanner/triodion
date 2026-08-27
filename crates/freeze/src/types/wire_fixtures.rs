@@ -11,7 +11,7 @@
 //! logs bloom — is filled with zeroes, because the deserializer requires the
 //! keys to be present but nothing reads them.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn zeros(bytes: usize) -> String {
     format!("0x{}", "00".repeat(bytes))

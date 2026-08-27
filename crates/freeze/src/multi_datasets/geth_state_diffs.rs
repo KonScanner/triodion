@@ -1,6 +1,6 @@
 use crate::*;
 use alloy::{
-    primitives::{Address, Bytes, B256, U256},
+    primitives::{Address, B256, Bytes, U256},
     rpc::types::trace::geth::{AccountState, DiffMode},
 };
 use polars::prelude::*;
@@ -61,8 +61,7 @@ impl CollectByBlock for GethStateDiffs {
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
-        let GethStateDiffs(ref mut balances, ref mut codes, ref mut nonces, ref mut storages) =
-            columns;
+        let GethStateDiffs(balances, codes, nonces, storages) = columns;
         process_geth_diffs(
             &response,
             balances.as_mut(),
@@ -85,8 +84,7 @@ impl CollectByTransaction for GethStateDiffs {
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
-        let GethStateDiffs(ref mut balances, ref mut codes, ref mut nonces, ref mut storages) =
-            columns;
+        let GethStateDiffs(balances, codes, nonces, storages) = columns;
         process_geth_diffs(
             &response,
             balances.as_mut(),

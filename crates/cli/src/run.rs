@@ -2,7 +2,7 @@ use crate::{args, parse, remember};
 use color_print::cstr;
 use colored::Colorize;
 use std::{sync::Arc, time::SystemTime};
-use triodion_core::{err, CollectError, ExecutionEnv, FreezeSummary};
+use triodion_core::{CollectError, ExecutionEnv, FreezeSummary, err};
 
 /// Entry point to run the CLI application.
 pub async fn run(args: args::Args) -> Result<Option<FreezeSummary>, CollectError> {
@@ -104,7 +104,7 @@ fn print_general_help() {
     //
     // Rendering the help through `CommandFactory` produces the same output and
     // returns normally.
-    let mut command = <args::Args as clap_cryo::CommandFactory>::command();
+    let mut command = <args::Args as clap::CommandFactory>::command();
     if let Err(e) = command.print_help() {
         eprintln!("could not print help: {e}");
     }

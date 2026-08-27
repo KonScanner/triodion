@@ -92,11 +92,7 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
     let beacon_rpc = args.beacon_rpc.clone().or_else(|| env::var("BEACON_RPC_URL").ok());
     let blob_archive =
         args.blob_archive.clone().or_else(|| env::var("BLOB_ARCHIVE_URL").ok()).map(|url| {
-            if url == "default" {
-                triodion_core::DEFAULT_BLOB_ARCHIVE.to_string()
-            } else {
-                url
-            }
+            if url == "default" { triodion_core::DEFAULT_BLOB_ARCHIVE.to_string() } else { url }
         });
     let beacon = if beacon_rpc.is_some() || blob_archive.is_some() {
         Some(Arc::new(

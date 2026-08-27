@@ -2,9 +2,9 @@ use crate::*;
 use alloy::{
     primitives::{Address, TxHash},
     rpc::types::{
+        BlockTransactionsKind, Filter, FilterBlockOption,
         eth::Log,
         trace::parity::{Action, LocalizedTransactionTrace, TraceOutput},
-        BlockTransactionsKind, Filter, FilterBlockOption,
     },
     sol_types::SolEvent,
 };
@@ -166,22 +166,22 @@ impl AddressAppearances {
 
         if let Some(logs) = logs_by_tx.get(&tx_hash) {
             for log in logs.iter() {
-                if log.topics().len() >= 3 {
-                    if let Some(event) = name(log) {
-                        // Derive both labels from `event`, never from each
-                        // other: the old code shadowed `name`, so the second
-                        // label came out as "..._from_to".
-                        let (from, to) = transfer_parties(log);
-                        for (address, suffix) in [(from, "_from"), (to, "_to")] {
-                            self.process_address(
-                                address,
-                                &(event.to_string() + suffix),
-                                block_number,
-                                &block_hash,
-                                tx_hash,
-                                schema,
-                            );
-                        }
+                if log.topics().len() >= 3 &&
+                    let Some(event) = name(log)
+                {
+                    // Derive both labels from `event`, never from each other:
+                    // the old code shadowed `name`, so the second label came
+                    // out as "..._from_to".
+                    let (from, to) = transfer_parties(log);
+                    for (address, suffix) in [(from, "_from"), (to, "_to")] {
+                        self.process_address(
+                            address,
+                            &(event.to_string() + suffix),
+                            block_number,
+                            &block_hash,
+                            tx_hash,
+                            schema,
+                        );
                     }
                 }
             }

@@ -1,6 +1,6 @@
 use crate::*;
 use alloy::{
-    primitives::{keccak256, Bytes, TxKind},
+    primitives::{Bytes, TxKind, keccak256},
     rpc::types::{TransactionInput, TransactionRequest},
 };
 use polars::prelude::*;

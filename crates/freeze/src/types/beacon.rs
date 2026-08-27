@@ -29,7 +29,7 @@
 //! is only swallowed when an archive can answer instead. See
 //! [`BeaconSource::blobs_for_block`].
 
-use crate::{err, CollectError, R};
+use crate::{CollectError, R, err};
 use alloy::transports::http::reqwest;
 use serde::{Deserialize, Deserializer};
 use std::sync::Arc;
@@ -576,13 +576,13 @@ impl BeaconSource {
         // requests would be filed under the wrong block silently, so make the
         // consensus block state its own execution block and compare.
         let payload = message.body.execution_payload.or(message.body.execution_payload_header);
-        if let Some(payload) = payload {
-            if payload.block_number != block_number {
-                return Err(CollectError::CollectError(format!(
-                    "slot {slot} carries execution block {}, not {block_number}",
-                    payload.block_number
-                )))
-            }
+        if let Some(payload) = payload &&
+            payload.block_number != block_number
+        {
+            return Err(CollectError::CollectError(format!(
+                "slot {slot} carries execution block {}, not {block_number}",
+                payload.block_number
+            )))
         }
 
         Ok(Some(BeaconBlockRequests {

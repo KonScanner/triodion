@@ -17,7 +17,7 @@ resolver = "3"
 
 [workspace.package]
 version = "0.4.4"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/KonScanner/triodion"
 repository = "https://github.com/KonScanner/triodion"
@@ -47,33 +47,20 @@ anstyle = "1.0.14"
 # opt-out). polars-arrow 0.55 no longer asks for it, so chrono resolves to
 # 0.4.45 and the workspace builds clean.
 chrono = { version = "0.4", features = ["serde"] }
-# clap_cryo carries a known-unsound transitive dependency and there is no
-# in-place fix: clap_builder_cryo requires `anstream ^0.3`, and the
+# clap is upstream, not the `clap_cryo` fork. The fork was pinned to
+# `clap_builder_cryo 4.3.21-cryo`, which requires `anstream ^0.3`; the
 # RUSTSEC-2024-0404 fix for `anstream::adapter::strip_str` first shipped in
-# `anstream 0.6.8`. No 0.3.x release carries it. Dropping the `color` feature
-# does not help either — Cargo.lock is resolved feature-independently, so the
-# `anstream` entry (and the alert) stays.
+# `anstream 0.6.8`, so no 0.3.x release carried it and the advisory could not
+# be resolved in place.
 #
-# The only real fix is to leave the fork for upstream clap, and that is not
-# free. clap_builder_cryo's sole delta over clap_builder 4.3.21 is
-# `is_number_range()`: it lets an arg with `allow_negative_numbers` accept
-# `-1000:-500` and `-1000:latest` as VALUES rather than flags. Upstream clap
-# 4.6 rejects both ("unexpected argument '-1' found"), and its
-# `allow_hyphen_values` alternative is greedy — it swallows the next real flag
-# (`-b -1000:latest --align` puts `--align` into `blocks`). Migrating needs an
-# argv normalisation pass in front of the parser, which is separate work.
-#
-# Blast radius meanwhile: `strip_str` mis-segments a specific UTF-8 + ANSI
-# escape byte sequence. It runs only when clap strips colour from help text.
-clap_cryo = { version = "4.3.21-cryo", features = [
-    "derive",
-    "color",
-    "unstable-styles",
-] }
-# colored stays on 2.x: colored 3.0 dropped the `truecolor()` method that
-# crates/cli/src/args.rs:334 relies on for the optional-subcommands header.
-# Bumping requires rewriting that header to use anstyle (already imported)
-# or `\x1b[…m` escapes, which is not free. Stay until a more targeted bump.
+# The fork's sole delta over upstream `clap_builder 4.3.21` was
+# `is_number_range()`: it let an arg with `allow_negative_numbers` accept
+# `-1000:-500` and `-1000:latest` as VALUES rather than flag clusters.
+# Upstream `allow_negative_numbers` only accepts tokens that parse as a whole
+# number, and its `allow_hyphen_values` alternative is greedy — it swallows
+# the next real flag. `crates/cli/src/argv.rs` restores the behaviour with an
+# argv normalisation pass in front of the parser instead.
+clap = { version = "4.6.6", features = ["derive", "color", "unstable-styles"] }
 colored = "2.2.0"
 color-print = "0.3.7"
 eyre = "0.6.12"

@@ -3,12 +3,14 @@ use std::{collections::HashMap, sync::Arc};
 use alloy::{
     eips::BlockNumberOrTag,
     network::TransactionResponse,
-    primitives::{Address, BlockNumber, Bytes, TxHash, B256, U256},
+    primitives::{Address, B256, BlockNumber, Bytes, TxHash, U256},
     providers::{
-        ext::{DebugApi, TraceApi},
         Provider, RootProvider,
+        ext::{DebugApi, TraceApi},
     },
     rpc::types::{
+        BlockTransactions, BlockTransactionsKind, Filter, Log, TransactionInput,
+        TransactionRequest,
         state::StateOverride,
         trace::{
             common::TraceResult,
@@ -21,27 +23,25 @@ use alloy::{
                 LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
             },
         },
-        BlockTransactions, BlockTransactionsKind, Filter, Log, TransactionInput,
-        TransactionRequest,
     },
     serde::WithOtherFields,
-    transports::{http::reqwest::Url, RpcError, TransportErrorKind},
+    transports::{RpcError, TransportErrorKind, http::reqwest::Url},
 };
 use governor::{
+    Quota,
     clock::DefaultClock,
     middleware::NoOpMiddleware,
-    state::{direct::NotKeyed, InMemoryState},
-    Quota,
+    state::{InMemoryState, direct::NotKeyed},
 };
 use std::num::NonZeroU32;
 use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
 
 use crate::{
+    CollectError,
     types::{
         chains::{RpcBlock, RpcReceipt, RpcTransaction, TriodionProvider},
-        state_override::{override_unavailable, OverrideSupport, StateReader},
+        state_override::{OverrideSupport, StateReader, override_unavailable},
     },
-    CollectError,
 };
 
 /// RateLimiter based on governor crate

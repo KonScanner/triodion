@@ -1,7 +1,7 @@
 use super::traces;
 use crate::*;
 use alloy::{
-    primitives::{keccak256, Address},
+    primitives::{Address, keccak256},
     rpc::types::trace::parity::{Action, LocalizedTransactionTrace, TraceOutput},
 };
 use polars::prelude::*;

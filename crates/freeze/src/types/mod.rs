@@ -25,7 +25,7 @@ pub mod partitions;
 pub mod rpc_params;
 
 pub use partitions::{Dim, Partition, PartitionLabels};
-pub use rpc_params::{address_dim_as_topic, Params};
+pub use rpc_params::{Params, address_dim_as_topic};
 
 /// collection traits
 pub mod collection;
@@ -69,33 +69,33 @@ pub use beacon::{
     BeaconConfig, BeaconSource, BlobProvenance, BlobRecord, BlobSidecar, DEFAULT_BLOB_ARCHIVE,
 };
 pub use chains::{
-    arbitrum, is_reencodable, op, other_bool, other_bytes, other_decimal_f64, other_u256,
-    other_u64, ChainFamily, RpcBlock, RpcReceipt, RpcTransaction, TriodionNetwork,
-    TriodionProvider, TxExtras,
+    ChainFamily, RpcBlock, RpcReceipt, RpcTransaction, TriodionNetwork, TriodionProvider, TxExtras,
+    arbitrum, is_reencodable, op, other_bool, other_bytes, other_decimal_f64, other_u64,
+    other_u256,
 };
 pub use chunks::{
     AddressChunk, BlockChunk, CallDataChunk, Chunk, ChunkData, ChunkStats, SlotChunk, Subchunk,
     TopicChunk, TransactionChunk,
 };
-pub use conversions::{bytes_to_u32, decode_u256_word, ToVecHex, ToVecU8};
+pub use conversions::{ToVecHex, ToVecU8, bytes_to_u32, decode_u256_word};
 pub use dataframes::*;
 pub use datatypes::*;
 pub use files::{ColumnEncoding, FileFormat, FileOutput, SubDir};
 pub use queries::{Query, QueryLabels, TimeDimension};
-pub use rpc_batch::{rpc_batch_collect_by_block, RpcBatchable, DEFAULT_RPC_BATCH_ROWS};
+pub use rpc_batch::{DEFAULT_RPC_BATCH_ROWS, RpcBatchable, rpc_batch_collect_by_block};
 pub use schemas::{ColumnType, SchemaFunctions, Schemas, Table, U256Type};
 pub use sources::{Fetcher, RateLimiter, Source, SourceLabels};
 pub use state_override::{
-    override_unavailable, state_override_collect_by_block, OverrideSupport, StateOverrideBatchable,
-    StateReader, DEFAULT_STATE_OVERRIDE_BATCH_SIZE, SCRATCH_ADDRESS,
+    DEFAULT_STATE_OVERRIDE_BATCH_SIZE, OverrideSupport, SCRATCH_ADDRESS, StateOverrideBatchable,
+    StateReader, override_unavailable, state_override_collect_by_block,
 };
 // pub(crate) use summaries::FreezeSummaryAgg;
 // pub use summaries::{FreezeChunkSummary, FreezeSummary};
-pub use summaries::{print_all_datasets, print_dataset_info, FreezeSummary};
+pub use summaries::{FreezeSummary, print_all_datasets, print_dataset_info};
 
 pub use errors::{
-    contract_read, err, CallOutcome, ChunkError, CollectError, FileError, FreezeError, ParseError,
-    R,
+    CallOutcome, ChunkError, CollectError, FileError, FreezeError, ParseError, R, contract_read,
+    err,
 };
 
 pub use collection::*;
@@ -104,9 +104,9 @@ pub use execution::{ExecutionEnv, ExecutionEnvBuilder};
 pub use signatures::*;
 
 pub use multicall::{
-    decode_string_or_bytes32, default_collect_by_block, multicall3_info,
-    multicall_collect_by_block, Multicall3, Multicall3Info, MulticallBatchable,
-    DEFAULT_MULTICALL_BATCH_SIZE, MULTICALL3_ADDRESS,
+    DEFAULT_MULTICALL_BATCH_SIZE, MULTICALL3_ADDRESS, Multicall3, Multicall3Info,
+    MulticallBatchable, decode_string_or_bytes32, default_collect_by_block,
+    multicall_collect_by_block, multicall3_info,
 };
 
 /// decoders

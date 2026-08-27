@@ -3,8 +3,8 @@ use polars::prelude::*;
 use triodion_core::{BlockChunk, ParseError, Source};
 
 use crate::{
-    parse::blocks::{block_range_to_block_chunk, postprocess_block_chunks},
     Args,
+    parse::blocks::{block_range_to_block_chunk, postprocess_block_chunks},
 };
 
 use super::blocks::get_latest_block_number;
@@ -302,11 +302,7 @@ async fn timestamp_to_block_number(timestamp: u64, source: Arc<Source>) -> Resul
     }
 
     // If timestamp is between two different blocks, return the lower block.
-    if mid > 0 && block.header.timestamp > timestamp {
-        Ok(mid - 1)
-    } else {
-        Ok(mid)
-    }
+    if mid > 0 && block.header.timestamp > timestamp { Ok(mid - 1) } else { Ok(mid) }
 }
 
 async fn get_latest_timestamp(source: Arc<Source>) -> Result<u64, ParseError> {

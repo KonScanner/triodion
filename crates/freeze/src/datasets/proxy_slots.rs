@@ -1,5 +1,5 @@
 use crate::*;
-use alloy::primitives::{b256, B256, U256};
+use alloy::primitives::{B256, U256, b256};
 use polars::prelude::*;
 
 /// ERC-1967 implementation slot.

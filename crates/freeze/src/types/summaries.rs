@@ -5,8 +5,8 @@ use colored::Colorize;
 use thousands::Separable;
 
 use crate::{
-    chunks::chunk_ops::ValueToString, ChunkData, ChunkStats, CollectError, ColumnType, Datatype,
-    Dim, ExecutionEnv, FileOutput, MetaDatatype, MultiDatatype, Partition, Query, Source, Table,
+    ChunkData, ChunkStats, CollectError, ColumnType, Datatype, Dim, ExecutionEnv, FileOutput,
+    MetaDatatype, MultiDatatype, Partition, Query, Source, Table, chunks::chunk_ops::ValueToString,
 };
 use std::path::PathBuf;
 
@@ -228,13 +228,12 @@ pub(crate) fn print_triodion_intro(
     print_bullet("output", "");
     if let Some(partition) = query.partitions.first() {
         let stats = partition.stats();
-        if let Some(dim) = query.partitioned_by.first() {
-            if dim == &Dim::BlockNumber {
-                if let Some(block_numbers) = stats.block_numbers {
-                    let chunk_size = block_numbers.chunk_size;
-                    print_bullet_indent("chunk size", chunk_size.separate_with_commas(), 4);
-                }
-            }
+        if let Some(dim) = query.partitioned_by.first() &&
+            dim == &Dim::BlockNumber &&
+            let Some(block_numbers) = stats.block_numbers
+        {
+            let chunk_size = block_numbers.chunk_size;
+            print_bullet_indent("chunk size", chunk_size.separate_with_commas(), 4);
         }
     }
 

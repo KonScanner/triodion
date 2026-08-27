@@ -1,4 +1,4 @@
-use crate::{err, CollectError, ExecutionEnv, FileOutput, FreezeSummary, Query};
+use crate::{CollectError, ExecutionEnv, FileOutput, FreezeSummary, Query, err};
 use chrono::{DateTime, Local};
 use std::{
     fs::File,

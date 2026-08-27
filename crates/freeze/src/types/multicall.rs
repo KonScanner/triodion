@@ -20,11 +20,11 @@
 //!   tokens.
 
 use crate::{
+    CollectByBlock, CollectError, Datatype, Params, Partition, Query, R, Source, ToDataFrames,
     collect_generic::{fetch_partition, join_partition_handles},
-    CollectByBlock, CollectError, Datatype, Params, Partition, Query, Source, ToDataFrames, R,
 };
 use alloy::{
-    primitives::{address, Address, Bytes},
+    primitives::{Address, Bytes, address},
     sol,
     sol_types::{SolCall, SolValue},
 };

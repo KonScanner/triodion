@@ -1,4 +1,4 @@
-use crate::{datasets::transactions, types::collection::*, Datatype, *};
+use crate::{Datatype, datasets::transactions, types::collection::*, *};
 use polars::prelude::*;
 use std::collections::HashMap;
 

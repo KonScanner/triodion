@@ -1,4 +1,4 @@
-use crate::{err, CollectError, ColumnEncoding, ToU256Series, U256Type};
+use crate::{CollectError, ColumnEncoding, ToU256Series, U256Type, err};
 use alloy::{
     dyn_abi::{DynSolValue, EventExt},
     hex::ToHexExt,
@@ -26,7 +26,10 @@ impl LogDecoder {
         match Event::parse(&event_signature) {
             Ok(event) => Ok(Self { event, raw: event_signature.clone() }),
             Err(e) => {
-                let err = format!("incorrectly formatted event {} (expect something like event Transfer(address indexed from, address indexed to, uint256 amount) err: {}", event_signature, e);
+                let err = format!(
+                    "incorrectly formatted event {} (expect something like event Transfer(address indexed from, address indexed to, uint256 amount) err: {}",
+                    event_signature, e
+                );
                 eprintln!("{}", err);
                 Err(err)
             }

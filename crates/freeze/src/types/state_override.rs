@@ -97,7 +97,7 @@
 
 use crate::{CollectError, Params};
 use alloy::{
-    primitives::{Address, Bytes, B256, U256},
+    primitives::{Address, B256, Bytes, U256},
     rpc::types::state::{AccountOverride, StateOverride},
 };
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -393,11 +393,7 @@ impl StateReader {
     /// `SLOAD` resolves against its storage; for the account readers it is
     /// [`SCRATCH_ADDRESS`].
     pub const fn call_target(self, target: Address) -> Address {
-        if self.injects_at_target() {
-            target
-        } else {
-            SCRATCH_ADDRESS
-        }
+        if self.injects_at_target() { target } else { SCRATCH_ADDRESS }
     }
 
     /// Whether this reader would report on its own injected code rather than

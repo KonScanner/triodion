@@ -1,7 +1,7 @@
 /// types and functions related to schemas
 use std::collections::HashMap;
 
-use crate::{err, CollectError, ColumnEncoding, Datatype, LogDecoder};
+use crate::{CollectError, ColumnEncoding, Datatype, LogDecoder, err};
 use indexmap::{IndexMap, IndexSet};
 use thiserror::Error;
 

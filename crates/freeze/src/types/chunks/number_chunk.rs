@@ -79,11 +79,7 @@ impl NumberChunk {
             NumberChunk::Range(start, end) => {
                 let start = start.div_ceil(chunk_size) * chunk_size;
                 let end = (end / chunk_size) * chunk_size;
-                if end > start {
-                    Some(NumberChunk::Range(start, end))
-                } else {
-                    None
-                }
+                if end > start { Some(NumberChunk::Range(start, end)) } else { None }
             }
         }
     }

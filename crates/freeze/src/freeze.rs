@@ -1,9 +1,9 @@
 use crate::{
-    collect_partition, dataframes, err, reports, summaries, CollectError, Datatype, ExecutionEnv,
-    FileOutput, FreezeSummary, MetaDatatype, Partition, Query, Source,
+    CollectError, Datatype, ExecutionEnv, FileOutput, FreezeSummary, MetaDatatype, Partition,
+    Query, Source, collect_partition, dataframes, err, reports, summaries,
 };
 use chrono::{DateTime, Local};
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,

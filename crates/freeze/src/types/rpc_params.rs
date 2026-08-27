@@ -1,6 +1,6 @@
-use crate::{err, CollectError};
+use crate::{CollectError, err};
 use alloy::{
-    primitives::{Address, BlockNumber, B256},
+    primitives::{Address, B256, BlockNumber},
     rpc::types::{Filter, FilterBlockOption, Log},
 };
 

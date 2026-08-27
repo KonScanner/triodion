@@ -1,8 +1,7 @@
 //! triodion_cli is a cli for triodion_core
 
-use clap_cryo::Parser;
-
 mod args;
+mod argv;
 mod parse;
 mod remember;
 mod run;
@@ -14,7 +13,7 @@ use eyre::Result;
 #[allow(unreachable_code)]
 #[allow(clippy::needless_return)]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse_cli();
     match run::run(args).await {
         Ok(Some(freeze_summary)) if freeze_summary.errored.is_empty() => Ok(()),
         Ok(Some(_freeze_summary)) => std::process::exit(1),

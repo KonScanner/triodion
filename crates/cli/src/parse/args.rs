@@ -3,7 +3,6 @@ use std::sync::Arc;
 use triodion_core::{ExecutionEnv, FileOutput, ParseError, Query, Source};
 
 use crate::args::Args;
-use clap_cryo::Parser;
 
 use super::{execution, file_output, query, source};
 
@@ -19,7 +18,20 @@ pub async fn parse_args(
 }
 
 /// parse command string
+///
+/// Splits on whitespace, so a value containing a space cannot be expressed —
+/// quote it and both halves become separate tokens. Callers that need one are
+/// building an [`Args`] directly.
+///
+/// # Errors
+///
+/// Returns [`ParseError::ParseError`] when the command does not parse. This
+/// goes through the fallible `try_parse_from_cli`, not `parse_from_cli`, on
+/// purpose: the infallible twin calls `std::process::exit` on a bad argv, and
+/// this function is reached from the Python extension module, where that would
+/// kill the interpreter with no traceback.
 #[allow(dead_code)]
 pub async fn parse_str(command: &str) -> Result<Args, ParseError> {
-    Ok(Args::parse_from(command.split_whitespace()))
+    Args::try_parse_from_cli(command.split_whitespace())
+        .map_err(|e| ParseError::ParseError(e.to_string()))
 }

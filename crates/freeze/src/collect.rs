@@ -1,4 +1,4 @@
-use crate::{collect_partition, CollectError, Query, Source};
+use crate::{CollectError, Query, Source, collect_partition};
 use polars::prelude::*;
 
 /// collect single dataframe

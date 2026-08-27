@@ -1,4 +1,4 @@
-use clap_cryo::Parser;
+use clap::{CommandFactory, Parser};
 use color_print::cstr;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -303,7 +303,7 @@ pub struct Args {
     /// `--no-multicall` to fall back to one `eth_call` per call.
     #[arg(
         long = "no-multicall",
-        action = clap_cryo::ArgAction::SetFalse,
+        action = clap::ArgAction::SetFalse,
         default_value_t = true,
         help_heading = "Dataset-specific Options"
     )]
@@ -316,7 +316,7 @@ pub struct Args {
     /// This field is not read.
     #[arg(
         long = "multicall",
-        action = clap_cryo::ArgAction::SetTrue,
+        action = clap::ArgAction::SetTrue,
         hide = true,
         help_heading = "Dataset-specific Options"
     )]
@@ -351,7 +351,7 @@ pub struct Args {
     /// cannot change results — only how many requests they cost.
     #[arg(
         long = "no-batch-state-reads",
-        action = clap_cryo::ArgAction::SetFalse,
+        action = clap::ArgAction::SetFalse,
         default_value_t = true,
         help_heading = "Dataset-specific Options"
     )]
@@ -383,7 +383,7 @@ pub struct Args {
     /// that mishandles batch envelopes outright.
     #[arg(
         long = "no-batch-rpc-calls",
-        action = clap_cryo::ArgAction::SetFalse,
+        action = clap::ArgAction::SetFalse,
         default_value_t = true,
         help_heading = "Dataset-specific Options"
     )]
@@ -391,6 +391,60 @@ pub struct Args {
 }
 
 impl Args {
+    /// Parse the process argv.
+    ///
+    /// Routes through [`crate::argv::normalize`] first so block and timestamp
+    /// ranges that start with `-` reach clap as values rather than flags. Use
+    /// this rather than [`Parser::parse`], which sees the raw argv.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic, but does not return either on a bad argv or on `--help`
+    /// / `--version`: clap prints and calls [`std::process::exit`]. That is
+    /// what a `main` wants and what any other caller must not have — from a
+    /// library, a test, or the Python extension module it takes the whole
+    /// process down. Use [`Args::try_parse_from_cli`] everywhere except `main`.
+    #[must_use]
+    pub fn parse_cli() -> Self {
+        Self::parse_from_cli(std::env::args_os())
+    }
+
+    /// Parse an explicit argv, normalising it the same way [`Args::parse_cli`]
+    /// does.
+    ///
+    /// # Panics
+    ///
+    /// Exits the process rather than returning on a bad argv — see
+    /// [`Args::parse_cli`]. Prefer [`Args::try_parse_from_cli`].
+    #[must_use]
+    pub fn parse_from_cli<I, T>(argv: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString>,
+    {
+        let command = Self::command();
+        Self::parse_from(crate::argv::normalize(&command, argv))
+    }
+
+    /// Parse an explicit argv, reporting a bad one instead of exiting.
+    ///
+    /// The fallible twin of [`Args::parse_from_cli`], and the one to reach for
+    /// anywhere the process must survive a parse failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`clap::Error`] for an unrecognised or malformed argv. Note
+    /// that `--help` and `--version` also arrive as an `Err`, carrying the text
+    /// to print and an exit code of 0 — that is clap's contract, not a failure.
+    pub fn try_parse_from_cli<I, T>(argv: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString>,
+    {
+        let command = Self::command();
+        Self::try_parse_from(crate::argv::normalize(&command, argv))
+    }
+
     pub(crate) fn merge_with_precedence(self, other: Args) -> Self {
         let default_struct = Args::default();
 
@@ -414,14 +468,14 @@ impl Args {
     }
 }
 
-pub(crate) fn get_styles() -> clap_cryo::builder::Styles {
+pub(crate) fn get_styles() -> clap::builder::Styles {
     let white = anstyle::Color::Rgb(anstyle::RgbColor(255, 255, 255));
     let green = anstyle::Color::Rgb(anstyle::RgbColor(0, 225, 0));
     let grey = anstyle::Color::Rgb(anstyle::RgbColor(170, 170, 170));
     let title = anstyle::Style::new().bold().fg_color(Some(green));
     let arg = anstyle::Style::new().bold().fg_color(Some(white));
     let comment = anstyle::Style::new().fg_color(Some(grey));
-    clap_cryo::builder::Styles::styled()
+    clap::builder::Styles::styled()
         .header(title)
         .error(comment)
         .usage(title)

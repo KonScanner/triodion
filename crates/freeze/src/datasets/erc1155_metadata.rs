@@ -190,10 +190,10 @@ fn process_erc1155_uris(logs: Vec<Log>, columns: &mut Erc1155Metadata, schema: &
             let is_template = event.value.contains(ID_PLACEHOLDER);
 
             columns.n_rows += 1;
-            store!(schema, columns, block_number, bn as u32);
+            store!(schema, columns, block_number, u32::try_from(bn)?);
             store!(schema, columns, block_hash, log.block_hash.map(|bh| bh.to_vec()));
-            store!(schema, columns, transaction_index, ti as u32);
-            store!(schema, columns, log_index, li as u32);
+            store!(schema, columns, transaction_index, u32::try_from(ti)?);
+            store!(schema, columns, log_index, u32::try_from(li)?);
             store!(schema, columns, transaction_hash, tx.to_vec());
             store!(schema, columns, erc1155, log.address().to_vec());
             store!(schema, columns, token_id, event.id);

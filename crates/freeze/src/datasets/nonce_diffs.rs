@@ -29,8 +29,9 @@ impl CollectByBlock for NonceDiffs {
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
         let schema = query.schemas.get_schema(&Datatype::NonceDiffs)?;
         let include_txs = schema.has_column("transaction_hash");
-        let (block_number, txs, traces) =
-            source.trace_block_state_diffs(request.block_number()? as u32, include_txs).await?;
+        let (block_number, txs, traces) = source
+            .trace_block_state_diffs(u32::try_from(request.block_number()?)?, include_txs)
+            .await?;
         Ok((block_number, txs, traces.into_iter().map(|t| t.full_trace).collect()))
     }
 
@@ -61,7 +62,7 @@ pub(crate) fn process_nonce_diffs(
     for (index, (trace, tx)) in traces.iter().zip(txs).enumerate() {
         if let Some(state_diffs) = &trace.state_diff {
             for (addr, diff) in state_diffs.iter() {
-                process_nonce_diff(addr, &diff.nonce, block_number, tx, index, columns, schema);
+                process_nonce_diff(addr, &diff.nonce, block_number, tx, index, columns, schema)?;
             }
         }
     }
@@ -76,18 +77,20 @@ pub(crate) fn process_nonce_diff(
     transaction_index: usize,
     columns: &mut NonceDiffs,
     schema: &Table,
-) {
+) -> R<()> {
     let (from, to) = match diff {
-        Delta::Unchanged => return,
+        Delta::Unchanged => return Ok(()),
         Delta::Added(value) => (U64::ZERO, *value),
         Delta::Removed(value) => (*value, U64::ZERO),
         Delta::Changed(ChangedType { from, to }) => (*from, *to),
     };
     columns.n_rows += 1;
     store!(schema, columns, block_number, *block_number);
-    store!(schema, columns, transaction_index, Some(transaction_index as u32));
+    store!(schema, columns, transaction_index, Some(u32::try_from(transaction_index)?));
     store!(schema, columns, transaction_hash, transaction_hash.clone());
     store!(schema, columns, address, addr.to_vec());
     store!(schema, columns, from_value, from.wrapping_to::<u64>());
     store!(schema, columns, to_value, to.wrapping_to::<u64>());
+
+    Ok(())
 }

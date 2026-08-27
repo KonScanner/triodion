@@ -1,11 +1,11 @@
 use pyo3::{
+    IntoPyObjectExt,
     exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
     types::IntoPyDict,
-    IntoPyObjectExt,
 };
 
-use triodion_cli::{run, Args};
+use triodion_cli::{Args, run};
 
 #[pyfunction(
     signature = (
@@ -236,7 +236,7 @@ pub fn _freeze(
                     Ok::<Py<PyAny>, PyErr>(dict.into_any().unbind())
                 }),
                 Ok(None) => Ok(Python::attach(|py| py.None())),
-                Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!("{e:?}"))),
+                Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!("{e}"))),
             }
         })
     } else {
@@ -246,7 +246,12 @@ pub fn _freeze(
 
 fn freeze_command(py: Python<'_>, command: String) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let args = triodion_cli::parse_str(command.as_str()).await.expect("could not parse inputs");
+        // `.expect` here panicked across the pyo3 boundary, so a bad command
+        // string reached Python as `RustPanic: unknown error` rather than as
+        // the parse error explaining what was wrong with it.
+        let args = triodion_cli::parse_str(command.as_str())
+            .await
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(format!("could not parse inputs: {e}")))?;
         match run(args).await {
             Ok(Some(result)) => Python::attach(|py| {
                 let dict = [
@@ -258,7 +263,7 @@ fn freeze_command(py: Python<'_>, command: String) -> PyResult<Bound<'_, PyAny>>
                 Ok::<Py<PyAny>, PyErr>(dict.into_any().unbind())
             }),
             Ok(None) => Ok(Python::attach(|py| py.None())),
-            Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!("{e:?}"))),
+            Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!("{e}"))),
         }
     })
 }

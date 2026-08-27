@@ -55,7 +55,7 @@ impl CollectByBlock for Erc20Supplies {
         // chunk is counted as errored instead of written out as nulls.
         let output = contract_read(source.call2(contract, call_data, block_number).await)?;
         let total_supply = output.and_then(|bytes| decode_u256_word(&bytes));
-        Ok((request.block_number()? as u32, request.address()?, total_supply))
+        Ok((u32::try_from(request.block_number()?)?, request.address()?, total_supply))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -106,7 +106,7 @@ impl MulticallBatchable for Erc20Supplies {
         // return, taking the whole chunk with it.
         let r = results.first().ok_or_else(|| err("multicall returned no result for row"))?;
         let total_supply = if r.success { decode_u256_word(&r.returnData) } else { None };
-        Ok((params.block_number()? as u32, params.address()?, total_supply))
+        Ok((u32::try_from(params.block_number()?)?, params.address()?, total_supply))
     }
 }
 

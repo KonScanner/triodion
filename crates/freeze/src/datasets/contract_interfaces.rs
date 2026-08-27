@@ -207,7 +207,7 @@ impl CollectByBlock for ContractInterfaces {
             *answer = output.and_then(|bytes| decode_bool_word(&bytes));
         }
 
-        Ok((request.block_number()? as u32, request.address()?, answers))
+        Ok((u32::try_from(request.block_number()?)?, request.address()?, answers))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -310,7 +310,7 @@ impl MulticallBatchable for ContractInterfaces {
             // as a revert is on the per-call path.
             *answer = if result.success { decode_bool_word(&result.returnData) } else { None };
         }
-        Ok((params.block_number()? as u32, params.address()?, answers))
+        Ok((u32::try_from(params.block_number()?)?, params.address()?, answers))
     }
 }
 

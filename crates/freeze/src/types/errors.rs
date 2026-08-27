@@ -87,6 +87,22 @@ pub enum CollectError {
     /// Generic RPC Error
     #[error("RPC call error")]
     RPCError(String),
+
+    /// A chain-supplied integer did not fit the width declared by the schema.
+    ///
+    /// Datasets store block numbers, transaction indices and log indices as
+    /// `u32` because that is the parquet column type, while the RPC types
+    /// carry them as `u64`. Narrowing with `as` would wrap a too-large value
+    /// into a small one that looks entirely plausible in the output file, so
+    /// the datasets narrow with `u32::try_from` and surface this instead.
+    ///
+    /// In practice this is unreachable: `u32::MAX` is 4_294_967_295, which at
+    /// a 12-second block time is over 1600 years of blocks, and no block has
+    /// ever carried more than a few thousand transactions or logs. It exists
+    /// so that if the assumption ever stops holding, the run fails loudly
+    /// rather than writing wrong data.
+    #[error("value does not fit the width declared by the schema column: {0}")]
+    ColumnValueOverflow(#[from] std::num::TryFromIntError),
 }
 
 /// Error related to parsing

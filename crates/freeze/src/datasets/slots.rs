@@ -44,7 +44,7 @@ impl CollectByBlock for Slots {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let address = request.address()?;
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         let slot = request.slot()?;
         let output = source
             .get_storage_at(
@@ -120,7 +120,13 @@ impl StateOverrideBatchable for Slots {
     fn decode_row(params: &Params, value: B256) -> R<Self::Response> {
         // `B256::to_vec` is the same 32 big-endian bytes `U256::to_vec_u8`
         // produces on the per-row path, so both paths write identical cells.
-        Ok((params.block_number()? as u32, None, params.address()?, params.slot()?, value.to_vec()))
+        Ok((
+            u32::try_from(params.block_number()?)?,
+            None,
+            params.address()?,
+            params.slot()?,
+            value.to_vec(),
+        ))
     }
 }
 

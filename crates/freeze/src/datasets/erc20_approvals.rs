@@ -142,10 +142,10 @@ fn process_erc20_approval(logs: Vec<Log>, columns: &mut Erc20Approvals, schema: 
             (log.block_number, log.transaction_hash, log.transaction_index, log.log_index)
         {
             columns.n_rows += 1;
-            store!(schema, columns, block_number, bn as u32);
+            store!(schema, columns, block_number, u32::try_from(bn)?);
             store!(schema, columns, block_hash, log.block_hash.map(|bh| bh.to_vec()));
-            store!(schema, columns, transaction_index, ti as u32);
-            store!(schema, columns, log_index, li as u32);
+            store!(schema, columns, transaction_index, u32::try_from(ti)?);
+            store!(schema, columns, log_index, u32::try_from(li)?);
             store!(schema, columns, transaction_hash, tx.to_vec());
             store!(schema, columns, erc20, log.address().to_vec());
             store!(schema, columns, from_address, log.topics()[1][12..].to_vec());

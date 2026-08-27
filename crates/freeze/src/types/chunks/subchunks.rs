@@ -13,7 +13,10 @@ impl Subchunk for BlockChunk {
     fn subchunk_by_size(&self, chunk_size: &u64) -> Vec<BlockChunk> {
         match &self {
             BlockChunk::Numbers(numbers) => numbers
-                .chunks(*chunk_size as usize)
+                // A chunk size wider than `usize` means "one chunk"; clamping
+                // says that, whereas `as` would wrap it to a small size on a
+                // 32-bit target and silently over-split the range.
+                .chunks(usize::try_from(*chunk_size).unwrap_or(usize::MAX))
                 .map(|chunk| BlockChunk::Numbers(chunk.to_vec()))
                 .collect(),
             BlockChunk::Range(start_block, end_block) => {

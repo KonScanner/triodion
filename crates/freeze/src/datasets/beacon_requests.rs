@@ -53,8 +53,8 @@ pub async fn fetch(request: Params, source: Arc<Source>) -> R<BlockRequests> {
     let found = beacon.execution_requests_for_block(block.header.number, slot).await?;
 
     Ok(BlockRequests {
-        block_number: block.header.number as u32,
-        timestamp: timestamp as u32,
+        block_number: u32::try_from(block.header.number)?,
+        timestamp: u32::try_from(timestamp)?,
         slot,
         epoch: Some(config.epoch_of_slot(slot)),
         // A slot with no requests still has a proposer; a pre-Electra slot is

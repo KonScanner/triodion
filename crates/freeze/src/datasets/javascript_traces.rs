@@ -28,7 +28,7 @@ impl CollectByBlock for JavascriptTraces {
         let schema =
             query.schemas.get(&Datatype::JavascriptTraces).ok_or(err("schema not provided"))?;
         let include_txs = schema.has_column("transaction_hash");
-        let block = request.block_number()? as u32;
+        let block = u32::try_from(request.block_number()?)?;
         if let Some(js_tracer) = &query.js_tracer {
             source
                 .geth_debug_trace_block_javascript_traces(js_tracer.clone(), block, include_txs)
@@ -79,7 +79,7 @@ pub(crate) fn process_javascript_traces(
     for (index, (value, tx)) in traces.iter().zip(txs).enumerate() {
         columns.n_rows += 1;
         store!(schema, columns, block_number, *block_number);
-        store!(schema, columns, transaction_index, Some(index as u32));
+        store!(schema, columns, transaction_index, Some(u32::try_from(index)?));
         store!(schema, columns, transaction_hash, tx.clone());
         store!(schema, columns, output, value.to_string());
     }

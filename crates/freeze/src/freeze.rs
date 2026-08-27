@@ -82,9 +82,16 @@ fn get_payloads(
     sink: &FileOutput,
     env: &ExecutionEnv,
 ) -> Result<(Vec<PartitionPayload>, Vec<Partition>), CollectError> {
-    let semaphore = source
-        .max_concurrent_chunks
-        .map(|x| std::sync::Arc::new(tokio::sync::Semaphore::new(x as usize)));
+    let semaphore = source.max_concurrent_chunks.map(|x| {
+        // Clamp rather than cast. `x as usize` would wrap a very large limit
+        // down to a small one on a 32-bit target, silently throttling the run,
+        // and `Semaphore::new` panics above `MAX_PERMITS` even on 64-bit. A
+        // limit larger than the semaphore can express means "no practical
+        // limit", so saturating at the maximum is the faithful reading.
+        let permits =
+            usize::try_from(x).unwrap_or(usize::MAX).min(tokio::sync::Semaphore::MAX_PERMITS);
+        std::sync::Arc::new(tokio::sync::Semaphore::new(permits))
+    });
     let source: Arc<Source> = Arc::new(source.clone());
     let arc_query = Arc::new(query.clone());
     let mut payloads = Vec::new();

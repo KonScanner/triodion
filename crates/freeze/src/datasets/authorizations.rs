@@ -90,9 +90,9 @@ impl CollectByBlock for Authorizations {
             .transactions
             .as_transactions()
             .ok_or_else(|| err("node returned transaction hashes for a full-block request"))?;
-        let block_number = response.header.number as u32;
+        let block_number = u32::try_from(response.header.number)?;
         for tx in transactions {
-            process_authorizations(tx, block_number, columns, schema);
+            process_authorizations(tx, block_number, columns, schema)?;
         }
         Ok(())
     }
@@ -108,14 +108,14 @@ impl CollectByTransaction for Authorizations {
             .await?
             .ok_or_else(|| err("transaction not found"))?;
         let block_number =
-            transaction.block_number.ok_or_else(|| err("no block number for tx"))? as u32;
+            u32::try_from(transaction.block_number.ok_or_else(|| err("no block number for tx"))?)?;
         Ok((transaction, block_number))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
         let schema = query.schemas.get_schema(&Datatype::Authorizations)?;
         let (transaction, block_number) = response;
-        process_authorizations(&transaction, block_number, columns, schema);
+        process_authorizations(&transaction, block_number, columns, schema)?;
         Ok(())
     }
 }
@@ -126,10 +126,10 @@ fn process_authorizations(
     block_number: u32,
     columns: &mut Authorizations,
     schema: &Table,
-) {
+) -> R<()> {
     let envelope = tx.inner.inner.inner();
     // `None` for every transaction type other than 0x04.
-    let Some(authorizations) = envelope.authorization_list() else { return };
+    let Some(authorizations) = envelope.authorization_list() else { return Ok(()) };
     let transaction_hash = envelope.trie_hash().to_vec();
     let transaction_index = tx.inner.transaction_index;
 
@@ -138,7 +138,7 @@ fn process_authorizations(
         store!(schema, columns, block_number, block_number);
         store!(schema, columns, transaction_index, transaction_index);
         store!(schema, columns, transaction_hash, transaction_hash.clone());
-        store!(schema, columns, authorization_index, index as u32);
+        store!(schema, columns, authorization_index, u32::try_from(index)?);
         store!(
             schema,
             columns,
@@ -152,6 +152,7 @@ fn process_authorizations(
         store!(schema, columns, r, authorization.r().to_vec_u8());
         store!(schema, columns, s, authorization.s().to_vec_u8());
     }
+    Ok(())
 }
 
 /// Signature parity as a bit, or nothing if it is neither 0 nor 1.

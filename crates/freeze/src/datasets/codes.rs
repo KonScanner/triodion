@@ -64,7 +64,7 @@ impl CollectByBlock for Codes {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let address = request.address()?;
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         let output = source.get_code(Address::from_slice(&address), block_number.into()).await?;
         Ok((block_number, None, address, output.to_vec()))
     }
@@ -127,7 +127,7 @@ impl RpcBatchable for Codes {
     }
 
     fn decode_row(params: &Params, item: Self::Item) -> R<Self::Response> {
-        Ok((params.block_number()? as u32, None, params.address()?, item.to_vec()))
+        Ok((u32::try_from(params.block_number()?)?, None, params.address()?, item.to_vec()))
     }
 
     fn default_rpc_batch_rows() -> usize {

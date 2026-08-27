@@ -38,7 +38,7 @@ impl CollectByBlock for Nonces {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let address = request.address()?;
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         let output = source
             .get_transaction_count(Address::from_slice(&address), block_number.into())
             .await?;
@@ -97,7 +97,7 @@ impl RpcBatchable for Nonces {
     }
 
     fn decode_row(params: &Params, item: Self::Item) -> R<Self::Response> {
-        Ok((params.block_number()? as u32, None, params.address()?, item.to::<u64>()))
+        Ok((u32::try_from(params.block_number()?)?, None, params.address()?, item.to::<u64>()))
     }
 }
 

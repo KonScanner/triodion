@@ -89,7 +89,7 @@ impl CollectByBlock for DepositRequests {
             store!(schema, columns, slot, response.slot);
             store!(schema, columns, epoch, response.epoch);
             store!(schema, columns, proposer_index, response.proposer_index);
-            store!(schema, columns, request_index, index as u32);
+            store!(schema, columns, request_index, u32::try_from(index)?);
             store!(schema, columns, pubkey, deposit.pubkey.clone());
             store!(schema, columns, withdrawal_credentials, deposit.withdrawal_credentials.clone());
             store!(

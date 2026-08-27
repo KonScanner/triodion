@@ -87,9 +87,9 @@ fn process_withdrawals(block: RpcBlock, columns: &mut Withdrawals, schema: &Tabl
     // as distinct from `blocks`, where the aggregate columns must still hold a
     // value and record 0.
     let Some(withdrawals) = block.withdrawals.as_ref() else { return Ok(()) };
-    let block_number = block.header.number as u32;
+    let block_number = u32::try_from(block.header.number)?;
     let block_hash = block.header.hash.to_vec();
-    let timestamp = block.header.timestamp as u32;
+    let timestamp = u32::try_from(block.header.timestamp)?;
 
     for withdrawal in withdrawals.iter() {
         columns.n_rows += 1;

@@ -11,7 +11,7 @@ if typing.TYPE_CHECKING:
 async def async_freeze(
     datatype: str | typing.Sequence[str],
     **kwargs: Unpack[_spec.TriodionCliArgs],
-) -> None:
+) -> dict[str, int] | None:
     """asynchronously collect data and save to files
 
     see triodion.parse_kwargs() for descriptions of arguments
@@ -38,21 +38,10 @@ async def async_freeze(
 def freeze(
     datatype: str | typing.Sequence[str],
     **kwargs: Unpack[_spec.TriodionCliArgs],
-) -> None:
+) -> dict[str, int] | None:
     """collect data and save to files"""
 
-    import asyncio
+    from . import _run
 
-    coroutine = async_freeze(datatype, **kwargs)
-
-    try:
-        import concurrent.futures
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(loop.run_until_complete, coroutine)  # type: ignore
-            return future.result()  # type: ignore
-    except RuntimeError:
-        return asyncio.run(coroutine)
+    return _run.run_coroutine(lambda: async_freeze(datatype, **kwargs))
 

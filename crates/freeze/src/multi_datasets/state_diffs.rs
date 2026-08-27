@@ -35,8 +35,9 @@ impl CollectByBlock for StateDiffs {
 
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
         let include_txs = query.schemas.values().any(|x| x.has_column("transaction_hash"));
-        let (bn, txs, traces) =
-            source.trace_block_state_diffs(request.block_number()? as u32, include_txs).await?;
+        let (bn, txs, traces) = source
+            .trace_block_state_diffs(u32::try_from(request.block_number()?)?, include_txs)
+            .await?;
         let trace_results = traces.into_iter().map(|t| t.full_trace).collect();
         Ok((bn, txs, trace_results))
     }

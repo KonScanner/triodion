@@ -852,10 +852,11 @@ impl Source {
     pub async fn get_transaction_block_number(&self, transaction_hash: Vec<u8>) -> Result<u32> {
         let block = self.get_transaction_by_hash(B256::from_slice(&transaction_hash)).await?;
         let block = block.ok_or(CollectError::CollectError("could not get block".to_string()))?;
-        Ok(block
-            .block_number
-            .ok_or(CollectError::CollectError("could not get block number".to_string()))?
-            as u32)
+        Ok(u32::try_from(
+            block
+                .block_number
+                .ok_or(CollectError::CollectError("could not get block number".to_string()))?,
+        )?)
     }
 
     /// block number of transaction
@@ -1571,7 +1572,7 @@ impl Source {
 
         let block_number = if include_block_number {
             match self.get_transaction_by_hash(ethers_tx).await? {
-                Some(tx) => tx.block_number.map(|x| x as u32),
+                Some(tx) => tx.block_number.map(u32::try_from).transpose()?,
                 None => {
                     return Err(CollectError::CollectError(
                         "could not get block for txs".to_string(),

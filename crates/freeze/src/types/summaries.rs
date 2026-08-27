@@ -584,21 +584,39 @@ fn percent_of(count: usize, total: usize) -> f64 {
     100.0 * (count as f64) / (total as f64)
 }
 
+/// Render a float with one decimal place and thousands separators.
+///
+/// The previous implementation truncated the integer part and rounded the
+/// fractional part as two independent steps, which lost the carry between
+/// them: 9.96 printed as "9.1", 99.96 as "99.1" and 0.96 as "0.1". It also
+/// leaned on `f64 as i64` / `f64 as usize`, and those casts saturate rather
+/// than fail, so NaN printed as "0.0" -- an undefined rate displayed as a
+/// clean zero -- and infinity printed as "9223372036854775807.0".
+///
+/// Rounding once, in the formatter, and splitting the result afterwards keeps
+/// the carry and removes every float-to-integer cast.
 fn format_float(number: f64) -> String {
-    let decimal_places = 1;
+    /// digits kept after the decimal point
+    const DECIMAL_PLACES: usize = 1;
 
-    let int_part = number.trunc() as i64;
-    let frac_multiplier = 10f64.powi(decimal_places as i32);
-    let frac_part = (number.fract() * frac_multiplier).round() as usize;
-
-    if frac_part == 0 {
-        return format!("{}.0", int_part.separate_with_commas());
+    // NaN and the infinities have no sensible separated form. Print them as
+    // themselves so the reader sees that the value is undefined.
+    if !number.is_finite() {
+        return number.to_string();
     }
 
-    let frac_str =
-        format!("{:0>width$}", frac_part, width = decimal_places).trim_end_matches('0').to_string();
+    let rendered = format!("{number:.DECIMAL_PLACES$}");
+    let (int_str, frac_str) = rendered.split_once('.').unwrap_or((rendered.as_str(), "0"));
 
-    format!("{}.{}", int_part.separate_with_commas(), frac_str)
+    // `int_str` came straight out of the formatter, so it parses for every
+    // value that fits `i64`. Beyond that range fall back to the unseparated
+    // digits rather than panicking.
+    let int_display = match int_str.parse::<i64>() {
+        Ok(n) => n.separate_with_commas(),
+        Err(_) => int_str.to_string(),
+    };
+
+    format!("{int_display}.{frac_str}")
 }
 
 #[cfg(test)]
@@ -623,5 +641,42 @@ mod percent_of_tests {
     #[test]
     fn zero_chunks_does_not_divide_by_zero() {
         assert_eq!(percent_of(0, 0), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod format_float_tests {
+    use super::format_float;
+
+    #[test]
+    fn a_fraction_that_rounds_up_carries_into_the_integer() {
+        // The previous implementation truncated the integer part and rounded
+        // the fractional part independently, so the carry was lost and these
+        // printed as "9.1", "99.1" and "0.1".
+        assert_eq!(format_float(9.96), "10.0");
+        assert_eq!(format_float(99.96), "100.0");
+        assert_eq!(format_float(0.96), "1.0");
+    }
+
+    #[test]
+    fn ordinary_values_keep_one_decimal_and_thousands_separators() {
+        assert_eq!(format_float(1234.56), "1,234.6");
+        assert_eq!(format_float(100.0), "100.0");
+        assert_eq!(format_float(0.75), "0.8");
+    }
+
+    #[test]
+    fn an_undefined_rate_is_not_displayed_as_zero() {
+        // `f64 as i64` turns NaN into 0, so an undefined rate used to print as
+        // a clean "0.0" -- the one value a reader would trust.
+        assert_eq!(format_float(f64::NAN), "NaN");
+        assert_eq!(format_float(f64::INFINITY), "inf");
+    }
+
+    #[test]
+    fn negative_values_keep_their_sign_and_magnitude() {
+        // `f64 as usize` clamps a negative fraction to 0, so -1.5 used to
+        // print as "-1.0".
+        assert_eq!(format_float(-1.5), "-1.5");
     }
 }

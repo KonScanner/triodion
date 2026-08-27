@@ -29,8 +29,9 @@ impl CollectByBlock for CodeDiffs {
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
         let schema = query.schemas.get(&Datatype::CodeDiffs).ok_or(err("schema not provided"))?;
         let include_txs = schema.has_column("transaction_hash");
-        let (bn, txs, traces) =
-            source.trace_block_state_diffs(request.block_number()? as u32, include_txs).await?;
+        let (bn, txs, traces) = source
+            .trace_block_state_diffs(u32::try_from(request.block_number()?)?, include_txs)
+            .await?;
         let trace_results = traces.into_iter().map(|t| t.full_trace).collect();
         Ok((bn, txs, trace_results))
     }
@@ -62,7 +63,7 @@ pub(crate) fn process_code_diffs(
     for (index, (trace, tx)) in traces.iter().zip(txs).enumerate() {
         if let Some(state_diffs) = &trace.state_diff {
             for (addr, diff) in state_diffs.iter() {
-                process_code_diff(addr, &diff.code, block_number, tx, index, columns, schema);
+                process_code_diff(addr, &diff.code, block_number, tx, index, columns, schema)?;
             }
         }
     }
@@ -77,13 +78,13 @@ pub(crate) fn process_code_diff(
     transaction_index: usize,
     columns: &mut CodeDiffs,
     schema: &Table,
-) {
+) -> R<()> {
     // this code will skip self-destructs and EOAs
     let (from, to) = match diff {
-        Delta::Unchanged => return,
+        Delta::Unchanged => return Ok(()),
         Delta::Added(value) => {
             if value.is_empty() {
-                return;
+                return Ok(());
             };
             (Vec::new(), value.to_vec())
         }
@@ -92,9 +93,11 @@ pub(crate) fn process_code_diff(
     };
     columns.n_rows += 1;
     store!(schema, columns, block_number, *block_number);
-    store!(schema, columns, transaction_index, Some(transaction_index as u32));
+    store!(schema, columns, transaction_index, Some(u32::try_from(transaction_index)?));
     store!(schema, columns, transaction_hash, transaction_hash.clone());
     store!(schema, columns, address, addr.to_vec());
     store!(schema, columns, from_value, from);
     store!(schema, columns, to_value, to);
+
+    Ok(())
 }

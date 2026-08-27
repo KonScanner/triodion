@@ -43,7 +43,12 @@ impl CollectByBlock for Erc20Balances {
         // so the chunk is counted as errored rather than written out as nulls.
         let output = contract_read(source.call2(contract, call_data, block_number).await)?;
         let balance = output.and_then(|bytes| decode_u256_word(&bytes));
-        Ok((request.block_number()? as u32, request.contract()?, request.address()?, balance))
+        Ok((
+            u32::try_from(request.block_number()?)?,
+            request.contract()?,
+            request.address()?,
+            balance,
+        ))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -91,6 +96,6 @@ impl MulticallBatchable for Erc20Balances {
         // Indexing would panic the worker task on a short aggregate3 return.
         let r = results.first().ok_or_else(|| err("multicall returned no result for row"))?;
         let balance = if r.success { decode_u256_word(&r.returnData) } else { None };
-        Ok((params.block_number()? as u32, params.contract()?, params.address()?, balance))
+        Ok((u32::try_from(params.block_number()?)?, params.contract()?, params.address()?, balance))
     }
 }

@@ -12,11 +12,21 @@ name = "triodion"
 # in one place (Cargo.toml).
 dynamic = ["version"]
 description = "triodion (KonScanner fork of cryo) — blockchain data extractor with extensions."
-requires-python = ">=3.7"
+# This said ">=3.7", which pyo3 0.29 cannot honour: its
+# MINIMUM_SUPPORTED_VERSION is 3.8, so a 3.7 install got a compiler error from
+# `build.rs` instead of a clean "unsupported Python" message from pip. 3.8 and
+# 3.9 are both past end of life, so the floor is 3.10. Keep this in agreement
+# with the matrix in .github/workflows/python_release.yml.
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 readme = "README.md"
 
@@ -32,3 +42,11 @@ strict = true
 files = ["python/triodion"]
 enable_incomplete_feature = "Unpack"
 
+[tool.pytest.ini_options]
+testpaths = ["python_tests"]
+# `rpc` marks the tests that drive real chain data. conftest.py skips them when
+# no endpoint is configured, so they must be registered here or pytest warns
+# about an unknown mark on every run.
+markers = [
+    "rpc: needs a live Ethereum endpoint (ETH_RPC_URL or MESC)",
+]

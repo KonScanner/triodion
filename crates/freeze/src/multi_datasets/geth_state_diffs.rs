@@ -55,7 +55,7 @@ impl CollectByBlock for GethStateDiffs {
     type Response = BlockTxsTraces;
 
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         let include_txs = query.schemas.values().any(|x| x.has_column("transaction_hash"));
         source.geth_debug_trace_block_diffs(block_number, include_txs).await
     }
@@ -112,7 +112,7 @@ pub(crate) fn process_geth_diffs(
 
     let blank = &AccountState::default();
     for (tx_index, (trace, tx)) in traces.iter().zip(txs).enumerate() {
-        let index = &(*block_number, tx_index as u32, tx.clone());
+        let index = &(*block_number, u32::try_from(tx_index)?, tx.clone());
         let addresses: Vec<_> = trace
             .pre
             .keys()

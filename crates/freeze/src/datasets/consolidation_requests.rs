@@ -81,7 +81,7 @@ impl CollectByBlock for ConsolidationRequests {
             store!(schema, columns, slot, response.slot);
             store!(schema, columns, epoch, response.epoch);
             store!(schema, columns, proposer_index, response.proposer_index);
-            store!(schema, columns, request_index, index as u32);
+            store!(schema, columns, request_index, u32::try_from(index)?);
             store!(schema, columns, source_address, consolidation.source_address.clone());
             store!(schema, columns, source_pubkey, consolidation.source_pubkey.clone());
             store!(schema, columns, target_pubkey, consolidation.target_pubkey.clone());

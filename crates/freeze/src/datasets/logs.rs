@@ -186,14 +186,14 @@ fn process_logs(logs: Vec<Log>, columns: &mut Logs, schema: &Table) -> R<()> {
             };
 
             columns.n_rows += 1;
-            store!(schema, columns, block_number, bn as u32);
+            store!(schema, columns, block_number, u32::try_from(bn)?);
             store!(schema, columns, block_hash, log.block_hash.map(|bh| bh.to_vec()));
-            store!(schema, columns, transaction_index, ti as u32);
-            store!(schema, columns, log_index, li as u32);
+            store!(schema, columns, transaction_index, u32::try_from(ti)?);
+            store!(schema, columns, log_index, u32::try_from(li)?);
             store!(schema, columns, transaction_hash, tx.to_vec());
             store!(schema, columns, address, log.address().to_vec());
             store!(schema, columns, data, log.data().data.to_vec());
-            store!(schema, columns, n_data_bytes, log.data().data.len() as u32);
+            store!(schema, columns, n_data_bytes, u32::try_from(log.data().data.len())?);
 
             // topics
             for i in 0..4 {

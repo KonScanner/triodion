@@ -66,10 +66,15 @@ pub(crate) fn process_native_transfers(
     let schema = schemas.get(&Datatype::NativeTransfers).ok_or(err("schema not provided"))?;
     for (transfer_index, trace) in traces.iter().enumerate() {
         columns.n_rows += 1;
-        store!(schema, columns, block_number, trace.block_number.unwrap_or(0) as u32);
-        store!(schema, columns, transaction_index, trace.transaction_position.map(|x| x as u32));
+        store!(schema, columns, block_number, u32::try_from(trace.block_number.unwrap_or(0))?);
+        store!(
+            schema,
+            columns,
+            transaction_index,
+            trace.transaction_position.map(u32::try_from).transpose()?
+        );
         store!(schema, columns, block_hash, trace.block_hash.unwrap().to_vec());
-        store!(schema, columns, transfer_index, transfer_index as u32);
+        store!(schema, columns, transfer_index, u32::try_from(transfer_index)?);
         store!(schema, columns, transaction_hash, trace.transaction_hash.map(|x| x.to_vec()));
 
         match &trace.trace.action {

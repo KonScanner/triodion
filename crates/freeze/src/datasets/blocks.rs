@@ -188,12 +188,12 @@ pub(crate) fn process_block(block: RpcBlock, columns: &mut Blocks, schema: &Tabl
     store!(schema, columns, state_root, block.header.state_root.0.to_vec());
     store!(schema, columns, transactions_root, block.header.transactions_root.0.to_vec());
     store!(schema, columns, receipts_root, block.header.receipts_root.0.to_vec());
-    store!(schema, columns, block_number, Some(block.header.number as u32));
+    store!(schema, columns, block_number, Some(u32::try_from(block.header.number)?));
     store!(schema, columns, gas_used, block.header.gas_used);
     store!(schema, columns, gas_limit, block.header.gas_limit);
     store!(schema, columns, extra_data, block.header.extra_data.to_vec());
     store!(schema, columns, logs_bloom, Some(block.header.logs_bloom.to_vec()));
-    store!(schema, columns, timestamp, block.header.timestamp as u32);
+    store!(schema, columns, timestamp, u32::try_from(block.header.timestamp)?);
     store!(schema, columns, difficulty, block.header.difficulty.wrapping_to::<u64>());
     store!(schema, columns, total_difficulty, block.header.total_difficulty);
     store!(schema, columns, base_fee_per_gas, block.header.base_fee_per_gas);
@@ -204,7 +204,7 @@ pub(crate) fn process_block(block: RpcBlock, columns: &mut Blocks, schema: &Tabl
     store!(schema, columns, nonce, block.header.nonce.map(|x| x.0.to_vec()));
     store!(schema, columns, withdrawals_root, block.header.withdrawals_root.map(|x| x.0.to_vec()));
     let (w_count, w_amount) = match block.withdrawals.as_ref() {
-        Some(ws) => (ws.len() as u32, ws.iter().map(|w| w.amount).sum::<u64>()),
+        Some(ws) => (u32::try_from(ws.len())?, ws.iter().map(|w| w.amount).sum::<u64>()),
         None => (0u32, 0u64),
     };
     store!(schema, columns, withdrawals_count, w_count);

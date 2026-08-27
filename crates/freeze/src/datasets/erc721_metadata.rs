@@ -50,7 +50,7 @@ impl CollectByBlock for Erc721Metadata {
         let symbol = contract_read(source.call2(address, call_data, block_number).await)?
             .and_then(|output| decode_string_or_bytes32(&output));
 
-        Ok((request.block_number()? as u32, request.address()?, name, symbol))
+        Ok((u32::try_from(request.block_number()?)?, request.address()?, name, symbol))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -116,6 +116,6 @@ impl MulticallBatchable for Erc721Metadata {
         } else {
             None
         };
-        Ok((params.block_number()? as u32, params.address()?, name, symbol))
+        Ok((u32::try_from(params.block_number()?)?, params.address()?, name, symbol))
     }
 }

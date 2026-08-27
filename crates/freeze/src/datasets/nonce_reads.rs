@@ -26,7 +26,9 @@ impl CollectByBlock for NonceReads {
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
         let schema = query.schemas.get(&Datatype::NonceReads).ok_or(err("schema not provided"))?;
         let include_txs = schema.has_column("transaction_hash");
-        source.geth_debug_trace_block_prestate(request.block_number()? as u32, include_txs).await
+        source
+            .geth_debug_trace_block_prestate(u32::try_from(request.block_number()?)?, include_txs)
+            .await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -58,7 +60,7 @@ pub(crate) fn process_nonce_reads(
     let (block_number, txs, traces) = response;
     for (index, (trace, tx)) in traces.iter().zip(txs).enumerate() {
         for (addr, account_state) in trace.iter() {
-            process_nonce_read(addr, account_state, block_number, tx, index, columns, schema);
+            process_nonce_read(addr, account_state, block_number, tx, index, columns, schema)?;
         }
     }
     Ok(())
@@ -72,13 +74,15 @@ pub(crate) fn process_nonce_read(
     transaction_index: usize,
     columns: &mut NonceReads,
     schema: &Table,
-) {
+) -> R<()> {
     if let Some(nonce) = &account_state.nonce {
         columns.n_rows += 1;
         store!(schema, columns, block_number, *block_number);
-        store!(schema, columns, transaction_index, Some(transaction_index as u32));
+        store!(schema, columns, transaction_index, Some(u32::try_from(transaction_index)?));
         store!(schema, columns, transaction_hash, transaction_hash.clone());
         store!(schema, columns, address, addr.to_vec());
         store!(schema, columns, nonce, *nonce);
     }
+
+    Ok(())
 }

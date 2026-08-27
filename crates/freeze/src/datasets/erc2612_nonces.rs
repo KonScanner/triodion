@@ -122,7 +122,7 @@ impl CollectByBlock for Erc2612Nonces {
             None
         };
 
-        let block = request.block_number()? as u32;
+        let block = u32::try_from(request.block_number()?)?;
         Ok((block, request.contract()?, owner_bytes, nonce, domain_separator))
     }
 
@@ -196,7 +196,7 @@ impl MulticallBatchable for Erc2612Nonces {
             None
         };
         Ok((
-            params.block_number()? as u32,
+            u32::try_from(params.block_number()?)?,
             params.contract()?,
             params.address()?,
             nonce,

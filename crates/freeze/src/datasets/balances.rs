@@ -35,7 +35,7 @@ impl CollectByBlock for Balances {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let address = request.address()?;
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         let balance =
             source.get_balance(Address::from_slice(&address), block_number.into()).await?;
         Ok((block_number, None, address, balance))
@@ -126,7 +126,12 @@ impl StateOverrideBatchable for Balances {
         // 32 big-endian bytes is the same `U256` `eth_getBalance` hands back on
         // the per-row path. Both paths write identical cells, which is the
         // property that lets a batch demote mid-partition.
-        Ok((params.block_number()? as u32, None, params.address()?, U256::from_be_bytes(value.0)))
+        Ok((
+            u32::try_from(params.block_number()?)?,
+            None,
+            params.address()?,
+            U256::from_be_bytes(value.0),
+        ))
     }
 }
 

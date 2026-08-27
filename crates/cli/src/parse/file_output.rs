@@ -23,7 +23,10 @@ pub(crate) fn parse_file_output(args: &Args, source: &Source) -> Result<FileOutp
     let row_group_size = parse_row_group_size(
         args.row_group_size,
         args.n_row_groups,
-        Some(args.chunk_size as usize),
+        // Clamp rather than cast: `as` would wrap a very large chunk size to a
+        // small one on a 32-bit target and silently change the row-group
+        // layout of every written file.
+        Some(usize::try_from(args.chunk_size).unwrap_or(usize::MAX)),
     );
 
     let format = parse_output_format(args)?;

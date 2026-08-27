@@ -89,7 +89,12 @@ impl MulticallBatchable for EthCalls {
         let r = results.first().ok_or_else(|| err("multicall returned no result for row"))?;
         let output_data =
             if r.success && !r.returnData.is_empty() { Some(r.returnData.to_vec()) } else { None };
-        Ok((params.block_number()? as u32, params.contract()?, params.call_data()?, output_data))
+        Ok((
+            u32::try_from(params.block_number()?)?,
+            params.contract()?,
+            params.call_data()?,
+            output_data,
+        ))
     }
 }
 
@@ -105,7 +110,7 @@ async fn single_eth_call(request: &Params, source: &Arc<Source>) -> R<EthCallsRe
     // null `output_data`. A node that could not serve the block propagates so
     // the chunk is counted as errored rather than filled with nulls.
     let output = contract_read(source.call(transaction, number).await)?.map(|x| x.to_vec());
-    Ok((number as u32, request.contract()?, request.call_data()?, output))
+    Ok((u32::try_from(number)?, request.contract()?, request.call_data()?, output))
 }
 
 fn process_eth_call(response: EthCallsResponse, columns: &mut EthCalls, schema: &Table) {

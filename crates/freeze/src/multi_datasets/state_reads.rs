@@ -54,7 +54,9 @@ impl CollectByBlock for StateReads {
             (_, _, _, Some(schema)) => schema.has_column("transaction_hash"),
             _ => false,
         };
-        source.geth_debug_trace_block_prestate(request.block_number()? as u32, include_txs).await
+        source
+            .geth_debug_trace_block_prestate(u32::try_from(request.block_number()?)?, include_txs)
+            .await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

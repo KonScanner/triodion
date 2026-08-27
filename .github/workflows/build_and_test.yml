@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -43,6 +43,92 @@ jobs:
         env:
           RUSTFLAGS: -Dwarnings
 
+  # `crates/python` is in the workspace `exclude` list, so every `--workspace`
+  # job above skips it entirely. Without this job the pyo3 extension crate is
+  # compiled by nothing on push or pull request: `python_release.yml` is
+  # `workflow_dispatch`-only. This job is the only thing that compiles it.
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Deliberately no `dtolnay/rust-toolchain` step. `crates/python` carries
+      # its own `rust-toolchain.toml` pinning the channel and the components it
+      # needs, and rustup honours that file for every cargo invocation made
+      # from that directory. Installing a second toolchain here would download
+      # it and then never use it.
+      - uses: actions/setup-python@v5
+        with:
+          # `build.rs` runs `pyo3-build-config`, which needs a real interpreter
+          # to resolve the target Python version. pyo3 0.29 requires >= 3.8.
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Separate cache key: `crates/python` is its own workspace with its
+          # own Cargo.lock, so it shares no build artifacts with the root.
+          workspaces: crates/python
+          cache-on-failure: true
+      - name: Clippy (triodion-py)
+        working-directory: crates/python
+        run: cargo clippy --all-targets
+        env:
+          RUSTFLAGS: -Dwarnings
+      # `clippy` alone stops at type checking. The extra `build` proves the
+      # cdylib actually links, which is what maturin ships.
+      - name: Build (triodion-py)
+        working-directory: crates/python
+        run: cargo build
+
+      # The Python suite in crates/python/python_tests ran nowhere before this.
+      # Building the wheel here rather than in a separate job reuses the target
+      # directory the two steps above just populated, so maturin compiles
+      # incrementally instead of from scratch.
+      - name: Install Python test dependencies
+        run: python -m pip install --upgrade pip maturin pytest polars
+      - name: Build and install the triodion wheel
+        working-directory: crates/python
+        run: |
+          maturin build --out dist
+          python -m pip install --force-reinstall dist/*.whl
+      - name: Run Python tests
+        working-directory: crates/python
+        env:
+          # Optional, and absent by default. Most of the suite drives real
+          # chain data and carries the `rpc` marker; conftest.py skips those
+          # when no endpoint is configured, so this job is green without one
+          # while still proving the wheel builds, the extension imports, and
+          # the missing-endpoint path reports itself properly. Add an
+          # ETH_RPC_URL repository secret and the marked tests start running
+          # here with no other change.
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: python -m pytest -q
+
+  # Supply-chain gate. Before this job existed, nothing checked advisories,
+  # licences, or dependency sources on a pull request: Dependabot only reports
+  # against the default branch, which means after a merge rather than before.
+  #
+  # cargo-deny rather than cargo-audit, and only one of the two, so that
+  # deny.toml stays the single source of truth. cargo-deny walks the resolved
+  # dependency graph, so it reports what is actually compiled; cargo-audit
+  # scans Cargo.lock, which is resolved without regard to enabled features and
+  # therefore also lists crates no feature ever activates. See the note at the
+  # end of the `ignore` list in deny.toml for the worked example.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: cargo deny (workspace)
+        run: cargo deny check
+      # `crates/python` is excluded from the workspace and carries its own
+      # Cargo.lock, so the check above never reads it. `--config` is needed
+      # because cargo-deny looks for deny.toml next to the given manifest.
+      - name: cargo deny (triodion-py)
+        run: cargo deny --manifest-path crates/python/Cargo.toml --config deny.toml check
+
   fmt:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -59,3 +145,6 @@ jobs:
       # `cargo fmt` runs STABLE rustfmt here, silently ignores all five
       # options, and then fails on the resulting disagreement.
       - run: cargo +nightly fmt --all --check
+      # `--all` covers workspace members only, so the excluded `crates/python`
+      # needs its own invocation or it is never format-checked.
+      - run: cargo +nightly fmt --manifest-path crates/python/Cargo.toml --all --check

@@ -83,7 +83,7 @@ impl CollectByBlock for ProxySlots {
 
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
         let address = request.ethers_address()?;
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
 
         // `from_be_bytes`, not `from_be_slice`: the latter panics when the slice
         // is not at most 32 bytes. All three are 32-byte constants, so neither

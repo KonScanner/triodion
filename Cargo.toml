@@ -5,8 +5,9 @@ members  = ["crates/cli", "crates/freeze", "crates/to_df"]
 # pyo3-polars which enables `polars-error/python`, propagating pyo3 with the
 # `extension-module` feature into every workspace crate via Cargo's feature
 # unification — which then fails to link the standalone `triodion` binary.
-# It is a standalone crate (see crates/python/Cargo.toml) and is built
-# separately via the `python-wheel` Makefile target.
+# It is a standalone crate (see crates/python/Cargo.toml). It is built
+# separately: by maturin in .github/workflows/python_release.yml, and by the
+# `python` job in .github/workflows/build_and_test.yml for check and clippy.
 exclude  = ["crates/python"]
 
 # Resolver 3 (Cargo 1.84+) gives per-target feature resolution, which we need
@@ -22,6 +23,20 @@ license = "MIT OR Apache-2.0"
 homepage = "https://github.com/KonScanner/triodion"
 repository = "https://github.com/KonScanner/triodion"
 exclude = [".github/"]
+
+[workspace.lints.clippy]
+# Enabled deliberately, and on its own rather than by turning on the whole
+# `pedantic` group. `pedantic` reports about 2300 findings across this
+# workspace; this single lint was 345 of them and carries essentially all of
+# the risk. triodion narrows chain-supplied `u64` values to the `u32` columns
+# its parquet schema declares, and a wrapping `as` there does not crash -- it
+# writes a small, plausible-looking wrong number into the output file. The
+# remaining ~2000 pedantic findings are naming and formatting preference.
+#
+# No `priority = -1` here because this is a single lint rather than a group.
+# A group entry would need it, or Cargo fails the build with
+# "lint group `pedantic` has the same priority (0) as a lint".
+cast_possible_truncation = "deny"
 
 [workspace.dependencies]
 triodion-cli = { version = "0.4.4", path = "./crates/cli" }

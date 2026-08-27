@@ -150,8 +150,8 @@ pub(crate) fn process_traces(
     let schema = schemas.get(&Datatype::Traces).ok_or(err("schema not provided"))?;
     for trace in traces.iter() {
         columns.n_rows += 1;
-        process_action(&trace.trace.action, columns, schema);
-        process_result(&trace.trace.result, columns, schema);
+        process_action(&trace.trace.action, columns, schema)?;
+        process_result(&trace.trace.result, columns, schema)?;
         store!(schema, columns, action_type, action_type_to_string(&trace.trace.action.kind()));
         store!(
             schema,
@@ -159,23 +159,28 @@ pub(crate) fn process_traces(
             trace_address,
             format_trace_address(&trace.trace.trace_address, '_')
         );
-        store!(schema, columns, subtraces, trace.trace.subtraces as u32);
-        store!(schema, columns, transaction_index, trace.transaction_position.map(|x| x as u32));
+        store!(schema, columns, subtraces, u32::try_from(trace.trace.subtraces)?);
+        store!(
+            schema,
+            columns,
+            transaction_index,
+            trace.transaction_position.map(u32::try_from).transpose()?
+        );
         store!(schema, columns, transaction_hash, trace.transaction_hash.map(|x| x.to_vec()));
-        store!(schema, columns, block_number, trace.block_number.unwrap() as u32);
+        store!(schema, columns, block_number, u32::try_from(trace.block_number.unwrap())?);
         store!(schema, columns, block_hash, trace.block_hash.unwrap().to_vec());
         store!(schema, columns, error, trace.trace.error.clone());
     }
     Ok(())
 }
 
-fn process_action(action: &Action, columns: &mut Traces, schema: &Table) {
+fn process_action(action: &Action, columns: &mut Traces, schema: &Table) -> R<()> {
     match action {
         Action::Call(action) => {
             store!(schema, columns, action_from, Some(action.from.to_vec()));
             store!(schema, columns, action_to, Some(action.to.to_vec()));
             store!(schema, columns, action_value, action.value.to_string());
-            store!(schema, columns, action_gas, Some(action.gas as u32));
+            store!(schema, columns, action_gas, Some(u32::try_from(action.gas)?));
             store!(schema, columns, action_input, Some(action.input.to_vec()));
             store!(
                 schema,
@@ -190,7 +195,7 @@ fn process_action(action: &Action, columns: &mut Traces, schema: &Table) {
             store!(schema, columns, action_from, Some(action.from.to_vec()));
             store!(schema, columns, action_to, None);
             store!(schema, columns, action_value, action.value.to_string());
-            store!(schema, columns, action_gas, Some(action.gas as u32));
+            store!(schema, columns, action_gas, Some(u32::try_from(action.gas)?));
             store!(schema, columns, action_input, None);
             store!(schema, columns, action_call_type, None);
             store!(schema, columns, action_init, Some(action.init.to_vec()));
@@ -222,18 +227,20 @@ fn process_action(action: &Action, columns: &mut Traces, schema: &Table) {
             );
         }
     }
+
+    Ok(())
 }
 
-fn process_result(result: &Option<TraceOutput>, columns: &mut Traces, schema: &Table) {
+fn process_result(result: &Option<TraceOutput>, columns: &mut Traces, schema: &Table) -> R<()> {
     match result {
         Some(TraceOutput::Call(result)) => {
-            store!(schema, columns, result_gas_used, Some(result.gas_used as u32));
+            store!(schema, columns, result_gas_used, Some(u32::try_from(result.gas_used)?));
             store!(schema, columns, result_output, Some(result.output.to_vec()));
             store!(schema, columns, result_code, None);
             store!(schema, columns, result_address, None);
         }
         Some(TraceOutput::Create(result)) => {
-            store!(schema, columns, result_gas_used, Some(result.gas_used as u32));
+            store!(schema, columns, result_gas_used, Some(u32::try_from(result.gas_used)?));
             store!(schema, columns, result_output, None);
             store!(schema, columns, result_code, Some(result.code.to_vec()));
             store!(schema, columns, result_address, Some(result.address.to_vec()));
@@ -245,6 +252,8 @@ fn process_result(result: &Option<TraceOutput>, columns: &mut Traces, schema: &T
             store!(schema, columns, result_address, None);
         }
     }
+
+    Ok(())
 }
 
 pub(crate) fn reward_type_to_string(reward_type: &RewardType) -> String {

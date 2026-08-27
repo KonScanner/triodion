@@ -53,8 +53,15 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
     // just above. Building a zero-permit semaphore instead made every
     // `permit_request()` wait forever: the run printed "collecting data" and
     // hung with no output and no error.
-    let semaphore = (max_concurrent_requests > 0)
-        .then(|| tokio::sync::Semaphore::new(max_concurrent_requests as usize));
+    let semaphore = (max_concurrent_requests > 0).then(|| {
+        // Clamp rather than cast. `as` would wrap a very large limit down
+        // to a small one on a 32-bit target, silently throttling the run,
+        // and `Semaphore::new` panics above `MAX_PERMITS` even on 64-bit.
+        let permits = usize::try_from(max_concurrent_requests)
+            .unwrap_or(usize::MAX)
+            .min(tokio::sync::Semaphore::MAX_PERMITS);
+        tokio::sync::Semaphore::new(permits)
+    });
     let semaphore = Arc::new(semaphore);
 
     // Optional L1 (settlement) provider for L2-related datasets.

@@ -159,8 +159,8 @@ impl AddressAppearances {
         schema: &Table,
         tx_hash: TxHash,
         logs_by_tx: &HashMap<TxHash, Vec<Log>>,
-    ) {
-        let block_number = trace.block_number.unwrap() as u32;
+    ) -> R<()> {
+        let block_number = u32::try_from(trace.block_number.unwrap())?;
         let block_hash = trace.block_hash.unwrap().to_vec();
         self.process_address(block_author, "miner_fee", block_number, &block_hash, tx_hash, schema);
 
@@ -229,6 +229,7 @@ impl AddressAppearances {
                 schema,
             );
         }
+        Ok(())
     }
 
     fn process_trace(
@@ -236,8 +237,8 @@ impl AddressAppearances {
         trace: &LocalizedTransactionTrace,
         schema: &Table,
         tx_hash: TxHash,
-    ) {
-        let block_number = trace.block_number.unwrap() as u32;
+    ) -> R<()> {
+        let block_number = u32::try_from(trace.block_number.unwrap())?;
         let block_hash = trace.block_hash.unwrap().to_vec();
         match &trace.trace.action {
             Action::Call(action) => {
@@ -308,6 +309,8 @@ impl AddressAppearances {
                 schema,
             );
         };
+
+        Ok(())
     }
 
     fn process_address(
@@ -348,9 +351,15 @@ fn process_appearances(
         if let (Some(tx_hash), Some(_tx_pos)) = (trace.transaction_hash, trace.transaction_position)
         {
             if tx_hash != current_tx_hash {
-                columns.process_first_transaction(block_author, trace, schema, tx_hash, &logs_by_tx)
+                columns.process_first_transaction(
+                    block_author,
+                    trace,
+                    schema,
+                    tx_hash,
+                    &logs_by_tx,
+                )?;
             }
-            columns.process_trace(trace, schema, tx_hash);
+            columns.process_trace(trace, schema, tx_hash)?;
             current_tx_hash = tx_hash;
         }
     }

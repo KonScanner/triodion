@@ -1,0 +1,160 @@
+# cargo-deny policy for the triodion workspace.
+#
+# Run locally with:
+#   cargo deny check
+#   cargo deny --manifest-path crates/python/Cargo.toml check
+#
+# The second invocation is not optional. `crates/python` is in the workspace
+# `exclude` list and carries its own Cargo.lock, so the root invocation never
+# reads it.
+
+[graph]
+# Leave `targets` unset on purpose. Restricting it would hide advisories and
+# licence problems in dependencies that only build on Windows or macOS, which
+# python_release.yml ships wheels for.
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Advisories
+# ---------------------------------------------------------------------------
+[advisories]
+yanked = "deny"
+
+# `unsound = "all"` is REQUIRED, not decoration. Verified empirically against
+# cargo-deny 0.20.2: with this key absent, `cargo deny check advisories`
+# reports `vulnerability` and `unmaintained` advisories but silently skips
+# every `informational = "unsound"` advisory. RUSTSEC-2026-0253 below is
+# exactly such an advisory, and without this line the check passes while
+# missing it. That is the worst failure mode a security gate can have.
+unsound = "all"
+
+# Everything below is a KNOWN advisory that this repository cannot fix by
+# changing its own manifests. Each entry records the blocking constraint so the
+# next person can re-test it instead of re-deriving it. Re-check them whenever
+# polars or alloy moves; delete the entry the moment the fix lands.
+ignore = [
+    { id = "RUSTSEC-2026-0194", reason = """
+quick-xml 0.39.4: quadratic run time when checking a start tag for duplicate
+attribute names. Fixed in >= 0.41.0.
+
+Not reachable from our own manifests. The chain is
+  polars (feature `lazy`) -> polars-stream -> polars-io (feature `file_cache`)
+  -> polars-io (feature `cloud`) -> polars-io (feature `http`)
+  -> object_store (feature `cloud`) -> quick-xml 0.39.4
+object_store 0.13.2 pins `quick-xml ^0.39`, so no 0.39.x release can carry the
+fix, and object_store is a non-optional dependency of polars-error. Dropping
+polars' `lazy` feature would remove it, but `lazy` is load-bearing for triodion.
+
+Exposure: the parser is reached only through object_store's S3 and Azure XML
+responses. triodion writes local parquet and never constructs a cloud store, so
+no triodion code path feeds this parser attacker-controlled XML.
+
+Re-test with: cargo tree -i quick-xml -e features
+""" },
+    { id = "RUSTSEC-2026-0195", reason = """
+quick-xml 0.39.4: unbounded namespace-declaration allocation in `NsReader`
+enables memory-exhaustion denial of service. Fixed in >= 0.41.0.
+Same dependency chain, same blocking pin, and same reachability argument as
+RUSTSEC-2026-0194 above.
+""" },
+    { id = "RUSTSEC-2026-0253", reason = """
+lru 0.16.4: potential use-after-free due to lack of panic safety in
+`LruCache::pop()`.
+
+A fix DOES exist -- the advisory records `patched = [">= 0.18.2"]` -- but we
+cannot take it. alloy-provider 2.0.5 declares `lru = "^0.16"`, so 0.18.2 is
+semver-incompatible with it and the resolver refuses:
+  $ cargo update -p lru --precise 0.18.2
+  error: failed to select a version for the requirement `lru = "^0.16"`
+The fix arrives when alloy-provider widens that requirement.
+
+Reached only as alloy-provider 2.0.5 -> lru 0.16.4, where it backs the internal
+block cache. Triggering the bug needs a panicking `Drop` on a stored key inside
+`catch_unwind`; alloy's key type is a plain block identifier.
+
+Re-test with: cargo update -p lru --precise 0.18.2
+""" },
+    { id = "RUSTSEC-2025-0141", reason = """
+bincode 2.0.1 is unmaintained. Transitive only: polars-utils 0.55.2 -> bincode.
+Nothing in triodion depends on bincode directly, and polars chooses its own
+serialisation crate. Drop this entry when polars moves off bincode.
+""" },
+    { id = "RUSTSEC-2024-0436", reason = """
+paste 1.0.15 is unmaintained. Transitive only, via
+alloy-primitives 1.6.0 -> paste. It is a proc-macro used at compile time, so it
+contributes no runtime code to the shipped binary. Drop this entry when alloy
+moves off paste.
+""" },
+    { id = "RUSTSEC-2026-0173", reason = """
+proc-macro-error2 2.0.1 is unmaintained. Transitive only, via
+alloy-sol-macro 1.6.0 -> proc-macro-error2. Compile-time only, same argument as
+paste above. Note that `cargo build` already prints a future-incompatibility
+warning for this crate, so it is on a clock regardless of the advisory.
+""" },
+]
+
+# NOT ignored here, and deliberately so: RUSTSEC-2024-0388 (`derivative` is
+# unmaintained). `cargo audit` reports it and `cargo deny` does not, and the
+# difference is not a bug in either tool. Cargo resolves a lockfile without
+# regard to which features are enabled, so Cargo.lock lists `derivative` by way
+# of `ruint`'s optional ark-ff integration. No feature we enable activates it,
+# so `cargo tree -i derivative -e all --target all` prints nothing and the
+# crate is never compiled. cargo-deny walks the resolved graph and correctly
+# omits it. Adding an ignore entry for it would only produce an
+# `advisory-not-detected` warning.
+
+# ---------------------------------------------------------------------------
+# Licences
+# ---------------------------------------------------------------------------
+[licenses]
+# triodion itself is "MIT OR Apache-2.0". This list is the set of SPDX
+# identifiers actually present in the resolved graph, not a speculative
+# superset: every entry was taken from `cargo metadata` output.
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    # Unicode-3.0 covers the icu_* and unicode-ident crates.
+    "Unicode-3.0",
+    # CDLA-Permissive-2.0 covers webpki-roots / webpki-root-certs, which are
+    # the Mozilla CA bundle rather than code.
+    "CDLA-Permissive-2.0",
+    # BSL-1.0 (Boost) covers xxhash-rust, and is one arm of ryu's dual licence.
+    "BSL-1.0",
+    # MPL-2.0 is the only copyleft licence in the graph: `colored` and
+    # `fastrlp`. It is file-level copyleft, so linking imposes no obligation on
+    # triodion's own sources. The obligation starts only if we modify and
+    # redistribute those crates' files, which we do not.
+    "MPL-2.0",
+]
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
+[bans]
+# "warn", not "deny". The graph legitimately carries duplicate majors that no
+# change here can collapse: fastrlp 0.3 + 0.4, webpki-roots 0.26 + 1.0,
+# r-efi 5 + 6. Denying would produce a permanently red check with no action
+# attached to it, which trains people to ignore the check.
+multiple-versions = "warn"
+# A `version = "*"` dependency makes the build non-reproducible.
+wildcards = "deny"
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+[sources]
+# Every dependency must come from crates.io. This is the check that would have
+# flagged the old `clap_cryo` fork arrangement had it been a git dependency,
+# and it is what keeps a future one from arriving unannounced.
+unknown-registry = "deny"
+unknown-git = "deny"

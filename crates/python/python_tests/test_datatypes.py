@@ -5,6 +5,10 @@ import polars as pl
 
 import triodion
 
+# Every test in this module reaches out to a real endpoint. See conftest.py:
+# without one configured these are skipped rather than failed.
+pytestmark = pytest.mark.rpc
+
 
 datatypes = [
     'blocks',

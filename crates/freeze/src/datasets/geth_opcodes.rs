@@ -57,7 +57,7 @@ impl CollectByBlock for GethOpcodes {
         };
         let options = GethDebugTracingOptions { config, ..Default::default() };
         let include_transaction = schema.has_column("block_number");
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         source.geth_debug_trace_block_opcodes(block_number, include_transaction, options).await
     }
 
@@ -103,7 +103,7 @@ fn process_geth_opcodes(
     let schema =
         schemas.get(&Datatype::GethOpcodes).ok_or(err("schema for geth_traces missing"))?;
     for (tx_index, (tx, trace)) in txs.into_iter().zip(traces).enumerate() {
-        process_trace(trace, columns, schema, &block_number, &tx, tx_index as u32, vec![])?
+        process_trace(trace, columns, schema, &block_number, &tx, u32::try_from(tx_index)?, vec![])?
     }
     Ok(())
 }

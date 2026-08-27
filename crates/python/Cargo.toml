@@ -63,3 +63,10 @@ tokio               = { version = "1.52", features = ["macros", "rt-multi-thread
 
 [build-dependencies]
 pyo3-build-config = "0.29"
+
+[lints.clippy]
+# Mirrors [workspace.lints.clippy] in the root Cargo.toml. This crate is in
+# that workspace's `exclude` list, so it inherits nothing from it and the
+# setting has to be repeated here. There are no truncating casts in this crate
+# today; the lint is what keeps it that way.
+cast_possible_truncation = "deny"

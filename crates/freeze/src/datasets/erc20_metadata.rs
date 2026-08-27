@@ -62,7 +62,7 @@ impl CollectByBlock for Erc20Metadata {
         let decimals = contract_read(source.call2(address, call_data, block_number).await)?
             .and_then(|output| bytes_to_u32(output).ok());
 
-        Ok((request.block_number()? as u32, request.address()?, name, symbol, decimals))
+        Ok((u32::try_from(request.block_number()?)?, request.address()?, name, symbol, decimals))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -141,6 +141,6 @@ impl MulticallBatchable for Erc20Metadata {
         } else {
             None
         };
-        Ok((params.block_number()? as u32, params.address()?, name, symbol, decimals))
+        Ok((u32::try_from(params.block_number()?)?, params.address()?, name, symbol, decimals))
     }
 }

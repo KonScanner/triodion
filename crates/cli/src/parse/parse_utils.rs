@@ -1,6 +1,24 @@
 use std::collections::HashMap;
 use triodion_core::ParseError;
 
+/// Convert a non-negative, finite `f64` to `u64`, or say why it cannot be.
+///
+/// There is no `TryFrom<f64> for u64`, and `as` does not fail on a value the
+/// target cannot hold -- it saturates. That silently mis-parsed user input:
+/// `--blocks -5B` became block 0 rather than an error, and `1e30B` became
+/// `u64::MAX`. Checking the range first makes the conversion total, so a bad
+/// block or timestamp reference is reported instead of quietly substituted.
+pub(crate) fn f64_to_u64(value: f64, context: &str) -> Result<u64, ParseError> {
+    // `u64::MAX as f64` rounds UP to 2^64, so compare with `<` to keep the
+    // cast below strictly in range.
+    if !value.is_finite() || value < 0.0 || value >= u64::MAX as f64 {
+        return Err(ParseError::ParseError(format!("{context} out of range: {value}")));
+    }
+    // Checked directly above: finite, non-negative, and below `u64::MAX`.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Ok(value as u64)
+}
+
 pub(crate) fn hex_string_to_binary(hex_string: &str) -> Result<Vec<u8>, ParseError> {
     let hex_string = hex_string.strip_prefix("0x").unwrap_or(hex_string);
     hex::decode(hex_string)
@@ -101,4 +119,34 @@ fn parse_file_column_reference(
     let parsed = FileColumnReference { path: path.to_string(), column: column.to_string() };
 
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod f64_to_u64_tests {
+    use super::f64_to_u64;
+
+    #[test]
+    fn accepts_values_inside_the_range() {
+        assert_eq!(f64_to_u64(0.0, "block ref").unwrap(), 0);
+        assert_eq!(f64_to_u64(1.5e9, "block ref").unwrap(), 1_500_000_000);
+    }
+
+    #[test]
+    fn rejects_a_negative_value_instead_of_reading_it_as_zero() {
+        // `-5e9 as u64` saturates to 0, so `--blocks -5B` used to parse as
+        // block 0 rather than being reported as bad input.
+        assert!(f64_to_u64(-5e9, "block ref").is_err());
+    }
+
+    #[test]
+    fn rejects_a_value_too_large_for_u64() {
+        // `1e30 as u64` saturates to `u64::MAX`.
+        assert!(f64_to_u64(1e30, "block ref").is_err());
+    }
+
+    #[test]
+    fn rejects_values_that_are_not_finite() {
+        assert!(f64_to_u64(f64::NAN, "block ref").is_err());
+        assert!(f64_to_u64(f64::INFINITY, "block ref").is_err());
+    }
 }

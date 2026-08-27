@@ -32,7 +32,7 @@ impl CollectByBlock for GethCalls {
     async fn extract(request: Params, source: Arc<Source>, query: Arc<Query>) -> R<Self::Response> {
         let schema = query.schemas.get_schema(&Datatype::GethCalls)?;
         let include_transaction = schema.has_column("block_number");
-        let block_number = request.block_number()? as u32;
+        let block_number = u32::try_from(request.block_number()?)?;
         source.geth_debug_trace_block_calls(block_number, include_transaction).await
     }
 
@@ -65,7 +65,7 @@ fn process_geth_traces(
     let (block_number, txs, traces) = traces;
     let schema = schemas.get(&Datatype::GethCalls).ok_or(err("schema for geth_traces missing"))?;
     for (tx_index, (tx, trace)) in txs.into_iter().zip(traces).enumerate() {
-        process_trace(trace, columns, schema, &block_number, &tx, tx_index as u32, vec![])?
+        process_trace(trace, columns, schema, &block_number, &tx, u32::try_from(tx_index)?, vec![])?
     }
     Ok(())
 }
@@ -96,7 +96,7 @@ fn process_trace(
 
     for (s, subcall) in trace.calls.into_iter().enumerate() {
         let mut sub_trace_address = trace_address.clone();
-        sub_trace_address.push(s as u32);
+        sub_trace_address.push(u32::try_from(s)?);
         process_trace(subcall, columns, schema, block_number, tx, tx_index, sub_trace_address)?
     }
 

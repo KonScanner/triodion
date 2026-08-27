@@ -32,7 +32,10 @@ impl CollectByBlock for FourByteCounts {
             query.schemas.get(&Datatype::FourByteCounts).ok_or(err("schema not provided"))?;
         let include_txs = schema.has_column("transaction_hash");
         source
-            .geth_debug_trace_block_4byte_traces(request.block_number()? as u32, include_txs)
+            .geth_debug_trace_block_4byte_traces(
+                u32::try_from(request.block_number()?)?,
+                include_txs,
+            )
             .await
     }
 
@@ -69,7 +72,7 @@ pub(crate) fn process_storage_reads(
             let (signature, size) = parse_signature_size(signature_size)?;
             columns.n_rows += 1;
             store!(schema, columns, block_number, *block_number);
-            store!(schema, columns, transaction_index, Some(index as u32));
+            store!(schema, columns, transaction_index, Some(u32::try_from(index)?));
             store!(schema, columns, transaction_hash, tx.clone());
             store!(schema, columns, signature, signature.clone());
             store!(schema, columns, size, size);

@@ -290,11 +290,11 @@ fn process_erc1155_transfers(
         let erc1155 = log.address().to_vec();
         for (index, (token_id, value)) in items.into_iter().enumerate() {
             columns.n_rows += 1;
-            store!(schema, columns, block_number, bn as u32);
+            store!(schema, columns, block_number, u32::try_from(bn)?);
             store!(schema, columns, block_hash, block_hash.clone());
-            store!(schema, columns, transaction_index, ti as u32);
-            store!(schema, columns, log_index, li as u32);
-            store!(schema, columns, token_id_index, index as u32);
+            store!(schema, columns, transaction_index, u32::try_from(ti)?);
+            store!(schema, columns, log_index, u32::try_from(li)?);
+            store!(schema, columns, token_id_index, u32::try_from(index)?);
             store!(schema, columns, transaction_hash, tx.to_vec());
             store!(schema, columns, erc1155, erc1155.clone());
             store!(schema, columns, operator, operator.to_vec());

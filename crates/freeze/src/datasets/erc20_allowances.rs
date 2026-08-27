@@ -103,7 +103,7 @@ impl CollectByBlock for Erc20Allowances {
         let output = contract_read(source.call2(contract, call_data, block_number).await)?;
         let allowance = output.and_then(|bytes| decode_u256_word(&bytes));
         Ok((
-            request.block_number()? as u32,
+            u32::try_from(request.block_number()?)?,
             request.contract()?,
             request.from_address()?,
             request.to_address()?,
@@ -159,7 +159,7 @@ impl MulticallBatchable for Erc20Allowances {
         let r = results.first().ok_or_else(|| err("multicall returned no result for row"))?;
         let allowance = if r.success { decode_u256_word(&r.returnData) } else { None };
         Ok((
-            params.block_number()? as u32,
+            u32::try_from(params.block_number()?)?,
             params.contract()?,
             params.from_address()?,
             params.to_address()?,

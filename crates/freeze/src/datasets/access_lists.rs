@@ -74,9 +74,9 @@ impl CollectByBlock for AccessLists {
             .transactions
             .as_transactions()
             .ok_or_else(|| err("node returned transaction hashes for a full-block request"))?;
-        let block_number = response.header.number as u32;
+        let block_number = u32::try_from(response.header.number)?;
         for tx in transactions {
-            process_access_list(tx, block_number, columns, schema);
+            process_access_list(tx, block_number, columns, schema)?;
         }
         Ok(())
     }
@@ -92,14 +92,14 @@ impl CollectByTransaction for AccessLists {
             .await?
             .ok_or_else(|| err("transaction not found"))?;
         let block_number =
-            transaction.block_number.ok_or_else(|| err("no block number for tx"))? as u32;
+            u32::try_from(transaction.block_number.ok_or_else(|| err("no block number for tx"))?)?;
         Ok((transaction, block_number))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
         let schema = query.schemas.get_schema(&Datatype::AccessLists)?;
         let (transaction, block_number) = response;
-        process_access_list(&transaction, block_number, columns, schema);
+        process_access_list(&transaction, block_number, columns, schema)?;
         Ok(())
     }
 }
@@ -110,13 +110,13 @@ fn process_access_list(
     block_number: u32,
     columns: &mut AccessLists,
     schema: &Table,
-) {
+) -> R<()> {
     let envelope = tx.inner.inner.inner();
     // `None` for a legacy transaction, which has no access list at all.
     // `Some(empty)` for a typed transaction that declared none. Both produce no
     // rows here, and `transactions.n_access_list_addresses` keeps the
     // distinction for anyone who needs it.
-    let Some(access_list) = envelope.access_list() else { return };
+    let Some(access_list) = envelope.access_list() else { return Ok(()) };
     let transaction_hash = envelope.trie_hash().to_vec();
     let transaction_index = tx.inner.transaction_index;
     let transaction_type = envelope.ty() as u32;
@@ -132,7 +132,7 @@ fn process_access_list(
                 &transaction_hash,
                 transaction_index,
                 transaction_type,
-                entry_index as u32,
+                u32::try_from(entry_index)?,
                 &entry.address,
                 None,
                 None,
@@ -147,13 +147,14 @@ fn process_access_list(
                 &transaction_hash,
                 transaction_index,
                 transaction_type,
-                entry_index as u32,
+                u32::try_from(entry_index)?,
                 &entry.address,
-                Some(key_index as u32),
+                Some(u32::try_from(key_index)?),
                 Some(key.to_vec()),
             );
         }
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

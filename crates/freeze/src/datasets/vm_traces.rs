@@ -41,7 +41,7 @@ impl CollectByBlock for VmTraces {
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
         let (bn, txs, traces) =
-            source.trace_block_vm_traces(request.block_number()? as u32).await?;
+            source.trace_block_vm_traces(u32::try_from(request.block_number()?)?).await?;
         let trace_results = traces.into_iter().map(|t| t.full_trace).collect();
         Ok((bn, txs, trace_results))
     }
@@ -72,7 +72,7 @@ fn process_vm_traces(
     let schema = schemas.get(&Datatype::VmTraces).ok_or(err("schema not provided"))?;
     for (tx_pos, block_trace) in block_traces.into_iter().enumerate() {
         if let Some(vm_trace) = block_trace.vm_trace {
-            add_ops(vm_trace, schema, columns, block_number, tx.clone(), tx_pos);
+            add_ops(vm_trace, schema, columns, block_number, tx.clone(), tx_pos)?;
         }
     }
     Ok(())
@@ -85,13 +85,13 @@ fn add_ops(
     number: Option<u32>,
     tx_hash: Option<Vec<u8>>,
     tx_pos: usize,
-) {
+) -> R<()> {
     for opcode in vm_trace.ops {
         columns.n_rows += 1;
 
         store!(schema, columns, block_number, number);
         store!(schema, columns, transaction_hash, tx_hash.clone());
-        store!(schema, columns, transaction_index, tx_pos as u32);
+        store!(schema, columns, transaction_index, u32::try_from(tx_pos)?);
         store!(schema, columns, pc, opcode.pc as u64);
         store!(schema, columns, cost, opcode.cost);
         if let Some(ex) = opcode.ex {
@@ -99,7 +99,7 @@ fn add_ops(
             store!(schema, columns, push, Some(ex.push.to_vec_u8()));
 
             if let Some(mem) = ex.mem {
-                store!(schema, columns, mem_off, Some(mem.off as u32));
+                store!(schema, columns, mem_off, Some(u32::try_from(mem.off)?));
                 store!(schema, columns, mem_data, Some(mem.data.to_vec()));
             } else {
                 store!(schema, columns, mem_off, None);
@@ -123,7 +123,9 @@ fn add_ops(
         store!(schema, columns, op, opcode.op);
 
         if let Some(sub) = opcode.sub {
-            add_ops(sub, schema, columns, number, tx_hash.clone(), tx_pos)
+            add_ops(sub, schema, columns, number, tx_hash.clone(), tx_pos)?;
         }
     }
+
+    Ok(())
 }

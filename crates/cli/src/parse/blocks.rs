@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use triodion_core::{BlockChunk, ChunkData, Datatype, ParseError, Source, Subchunk, Table};
 
-use crate::args::Args;
+use crate::{args::Args, parse::parse_utils::f64_to_u64};
 
 pub(crate) async fn parse_blocks(
     args: &Args,
@@ -257,15 +257,23 @@ fn evenly_spaced_subset<T: Clone>(items: Vec<T>, subset_length: usize) -> Vec<T>
     }
 
     let original_length = items.len();
-    let interval = (original_length - 1) as f64 / (subset_length - 1) as f64;
 
-    let mut accumulator: f64 = 0.0;
+    // A single sample has no interval to step by, and computing one would
+    // divide by zero.
+    if subset_length == 1 {
+        return vec![items[0].clone()];
+    }
+
     let mut subset = Vec::with_capacity(subset_length);
 
-    for _ in 0..subset_length {
-        let index = accumulator.floor() as usize;
+    // Integer arithmetic rather than a float accumulator. In integer division
+    // `i * (len - 1) / (subset_length - 1)` equals `floor(i * interval)`
+    // exactly, so the selection is unchanged, and it removes an
+    // `f64 as usize` cast that saturates to `usize::MAX` on a non-finite
+    // accumulator and would then index out of bounds.
+    for i in 0..subset_length {
+        let index = i * (original_length - 1) / (subset_length - 1);
         subset.push(items[index].clone());
-        accumulator += interval;
     }
 
     subset
@@ -350,25 +358,25 @@ async fn parse_block_number(
         _ if block_ref.ends_with('B') | block_ref.ends_with('b') => {
             let s = &block_ref[..block_ref.len() - 1];
             s.parse::<f64>()
-                .map(|n| (1e9 * n).round() as u64)
                 .map_err(|_e| ParseError::ParseError("Error parsing block ref".to_string()))
+                .and_then(|n| f64_to_u64((1e9 * n).round(), "block ref"))
         }
         _ if block_ref.ends_with('M') | block_ref.ends_with('m') => {
             let s = &block_ref[..block_ref.len() - 1];
             s.parse::<f64>()
-                .map(|n| (1e6 * n).round() as u64)
                 .map_err(|_e| ParseError::ParseError("Error parsing block ref".to_string()))
+                .and_then(|n| f64_to_u64((1e6 * n).round(), "block ref"))
         }
         _ if block_ref.ends_with('K') | block_ref.ends_with('k') => {
             let s = &block_ref[..block_ref.len() - 1];
             s.parse::<f64>()
-                .map(|n| (1e3 * n).round() as u64)
                 .map_err(|_e| ParseError::ParseError("Error parsing block ref".to_string()))
+                .and_then(|n| f64_to_u64((1e3 * n).round(), "block ref"))
         }
         _ => block_ref
             .parse::<f64>()
             .map_err(|_e| ParseError::ParseError("Error parsing block ref".to_string()))
-            .map(|x| x as u64),
+            .and_then(|x| f64_to_u64(x, "block ref")),
     }
 }
 

@@ -248,7 +248,7 @@ impl CollectByBlock for Transactions {
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
         let schema = query.schemas.get_schema(&Datatype::Transactions)?;
         let (block, transactions_with_receipts, exclude_failed) = response;
-        let timestamp = block.header.timestamp as u32;
+        let timestamp = u32::try_from(block.header.timestamp).expect("fixture timestamp fits u32");
         let base_fee_per_gas = block.header.base_fee_per_gas;
         for (tx, receipt) in transactions_with_receipts.into_iter() {
             process_transaction(
@@ -290,7 +290,7 @@ impl CollectByTransaction for Transactions {
             .await?
             .ok_or(CollectError::CollectError("block not found".to_string()))?;
 
-        let timestamp = block.header.timestamp as u32;
+        let timestamp = u32::try_from(block.header.timestamp).expect("fixture timestamp fits u32");
 
         Ok(((transaction, receipt), block, query.exclude_failed, timestamp))
     }
@@ -351,7 +351,7 @@ pub(crate) fn process_transaction(
     let family = ChainFamily::of_tx_type(tx_type);
 
     columns.n_rows += 1;
-    store!(schema, columns, block_number, tx.block_number.map(|x| x as u32));
+    store!(schema, columns, block_number, tx.block_number.map(u32::try_from).transpose()?);
     store!(schema, columns, transaction_index, tx.transaction_index);
     // `trie_hash` is the one encoding-adjacent call that is safe on an unknown
     // type byte: it returns the hash the node reported instead of recomputing.
@@ -375,8 +375,9 @@ pub(crate) fn process_transaction(
         schema.has_column("n_input_zero_bytes") |
         schema.has_column("n_input_nonzero_bytes")
     {
-        let n_input_bytes = envelope.input().len() as u32;
-        let n_input_zero_bytes = envelope.input().iter().filter(|&&x| x == 0).count() as u32;
+        let n_input_bytes = u32::try_from(envelope.input().len())?;
+        let n_input_zero_bytes =
+            u32::try_from(envelope.input().iter().filter(|&&x| x == 0).count())?;
         store!(schema, columns, n_input_bytes, n_input_bytes);
         store!(schema, columns, n_input_zero_bytes, n_input_zero_bytes);
         store!(schema, columns, n_input_nonzero_bytes, n_input_bytes - n_input_zero_bytes);
@@ -387,7 +388,7 @@ pub(crate) fn process_transaction(
         schema,
         columns,
         n_rlp_bytes,
-        is_reencodable(envelope).then(|| envelope.encode_2718_len() as u32)
+        is_reencodable(envelope).then(|| u32::try_from(envelope.encode_2718_len())).transpose()?
     );
     store!(schema, columns, gas_used, receipt.as_ref().map(|r| r.gas_used));
     store!(
@@ -428,19 +429,32 @@ pub(crate) fn process_transaction(
     // EIP-2930. `access_list()` is `None` for legacy transactions and `Some`
     // (possibly empty) for every typed one, so the null carries information.
     let access_list = envelope.access_list();
-    store!(schema, columns, n_access_list_addresses, access_list.map(|list| list.len() as u32));
+    store!(
+        schema,
+        columns,
+        n_access_list_addresses,
+        access_list.map(|list| u32::try_from(list.len())).transpose()?
+    );
     store!(
         schema,
         columns,
         n_access_list_storage_keys,
         access_list
-            .map(|list| list.iter().map(|item| item.storage_keys.len()).sum::<usize>() as u32)
+            .map(|list| u32::try_from(
+                list.iter().map(|item| item.storage_keys.len()).sum::<usize>()
+            ))
+            .transpose()?
     );
 
     // EIP-4844.
     store!(schema, columns, max_fee_per_blob_gas, envelope.max_fee_per_blob_gas().map(U256::from));
     let blob_hashes = envelope.blob_versioned_hashes();
-    store!(schema, columns, n_blob_versioned_hashes, blob_hashes.map(|hashes| hashes.len() as u32));
+    store!(
+        schema,
+        columns,
+        n_blob_versioned_hashes,
+        blob_hashes.map(|hashes| u32::try_from(hashes.len())).transpose()?
+    );
     store!(
         schema,
         columns,
@@ -460,7 +474,7 @@ pub(crate) fn process_transaction(
         schema,
         columns,
         n_authorizations,
-        envelope.authorization_list().map(|list| list.len() as u32)
+        envelope.authorization_list().map(|list| u32::try_from(list.len())).transpose()?
     );
 
     // OP stack: deposit body, then the L1-fee family off the receipt.
@@ -624,7 +638,7 @@ mod tests {
     fn collect(block: &RpcBlock) -> Transactions {
         let schema = schema();
         let mut columns = Transactions::default();
-        let timestamp = block.header.timestamp as u32;
+        let timestamp = u32::try_from(block.header.timestamp).expect("fixture timestamp fits u32");
         let base_fee = block.header.base_fee_per_gas;
         for tx in block.transactions.as_transactions().expect("fixture has full bodies") {
             process_transaction(

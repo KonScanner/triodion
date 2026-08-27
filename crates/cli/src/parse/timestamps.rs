@@ -4,7 +4,10 @@ use triodion_core::{BlockChunk, ParseError, Source};
 
 use crate::{
     Args,
-    parse::blocks::{block_range_to_block_chunk, postprocess_block_chunks},
+    parse::{
+        blocks::{block_range_to_block_chunk, postprocess_block_chunks},
+        parse_utils::f64_to_u64,
+    },
 };
 
 use super::blocks::get_latest_block_number;
@@ -255,7 +258,7 @@ async fn parse_timestamp_number(
         _ => timestamp_ref
             .parse::<f64>()
             .map_err(|_e| ParseError::ParseError("Error parsing timestamp ref".to_string()))
-            .map(|x| x as u64),
+            .and_then(|x| f64_to_u64(x, "timestamp ref")),
     }
 }
 
@@ -265,8 +268,8 @@ fn scale_timestamp_str_by_metric_unit(
 ) -> Result<u64, ParseError> {
     let s = &timestamp_ref[..timestamp_ref.len() - 1];
     s.parse::<f64>()
-        .map(|n| (metric_scale as f64 * n) as u64)
         .map_err(|_e| ParseError::ParseError("Error parsing timestamp ref".to_string()))
+        .and_then(|n| f64_to_u64((metric_scale as f64 * n).round(), "timestamp ref"))
 }
 
 // perform binary search to determine the closest block number smaller than or equal to a given

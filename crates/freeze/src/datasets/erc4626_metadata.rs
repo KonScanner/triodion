@@ -92,7 +92,13 @@ impl CollectByBlock for Erc4626Metadata {
         let total_supply = contract_read(source.call2(address, call_data, block_number).await)?
             .and_then(|output| decode_u256_word(&output));
 
-        Ok((request.block_number()? as u32, request.address()?, asset, total_assets, total_supply))
+        Ok((
+            u32::try_from(request.block_number()?)?,
+            request.address()?,
+            asset,
+            total_assets,
+            total_supply,
+        ))
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -182,7 +188,13 @@ impl MulticallBatchable for Erc4626Metadata {
         } else {
             None
         };
-        Ok((params.block_number()? as u32, params.address()?, asset, total_assets, total_supply))
+        Ok((
+            u32::try_from(params.block_number()?)?,
+            params.address()?,
+            asset,
+            total_assets,
+            total_supply,
+        ))
     }
 }
 

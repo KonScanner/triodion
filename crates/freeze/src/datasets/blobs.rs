@@ -112,8 +112,8 @@ impl CollectByBlock for Blobs {
         let schema = query.schemas.get_schema(&Datatype::Blobs)?;
         let (block, slot, epoch, blobs) = response;
         let carriers = blob_carriers(&block);
-        let timestamp = block.header.timestamp as u32;
-        let block_number = block.header.number as u32;
+        let timestamp = u32::try_from(block.header.timestamp)?;
+        let block_number = u32::try_from(block.header.number)?;
 
         for blob in blobs {
             let carrier = blob
@@ -127,7 +127,7 @@ impl CollectByBlock for Blobs {
             store!(schema, columns, slot, blob.slot.or(slot));
             store!(schema, columns, epoch, epoch);
             store!(schema, columns, proposer_index, blob.proposer_index);
-            store!(schema, columns, blob_index, blob.index as u32);
+            store!(schema, columns, blob_index, u32::try_from(blob.index)?);
             store!(schema, columns, versioned_hash, blob.versioned_hash);
             store!(schema, columns, kzg_commitment, blob.kzg_commitment);
             store!(schema, columns, kzg_proof, blob.kzg_proof);

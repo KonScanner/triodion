@@ -5,6 +5,10 @@ import pytest
 import triodion
 import polars as pl
 
+# Every test in this module reaches out to a real endpoint. See conftest.py:
+# without one configured these are skipped rather than failed.
+pytestmark = pytest.mark.rpc
+
 
 queries = [
     {
@@ -38,21 +42,29 @@ def test_file_output(query, format):
         query_without_datatype = dict(query)
         del query_without_datatype['datatype']
         df_collect = triodion.collect(datatype, **query_without_datatype)
-        assert df_freeze.frame_equal(df_collect)
+        # `frame_equal` was removed in polars 0.20 and renamed to `equals`;
+        # the old call raised AttributeError on every modern polars.
+        assert df_freeze.equals(df_collect)
 
 
 python_formats = [
-    'polars',
-    'pandas',
-    'list',
-    'dict',
+    ['polars', pl.DataFrame],
+    ['list', list],
+    ['dict', dict],
 ]
 
 
 @pytest.mark.parametrize('query', queries)
 @pytest.mark.parametrize('format', python_formats)
-def python_output_python_formats(query, format):
+def test_python_output_formats(query, format):
+    # Two bugs here before. The function was named
+    # `python_output_python_formats`, without the `test_` prefix, so pytest
+    # never collected it. And `python_formats` held plain strings while the
+    # body unpacked each into two names, so it would have raised ValueError
+    # the moment it did run. Each entry now carries the expected type.
     output_format, output_type = format
-    df = triodion.collect(output_format=output_format, **query)
+    query = dict(query)
+    datatype = query.pop('datatype')[0]
+    df = triodion.collect(datatype, output_format=output_format, **query)
     assert isinstance(df, output_type)
 

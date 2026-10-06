@@ -43,6 +43,18 @@ use crate::{
 /// the clock and middleware type parameters track the governor release.
 pub type RateLimiter = governor::DefaultDirectRateLimiter;
 
+/// Build the request-rate cap that every [`Source`] uses: `requests_per_second`
+/// permits each second with a burst of 1, so the cap is a hard ceiling.
+///
+/// Returns `None`, which means no limit, for `0` and for values above
+/// `u32::MAX`. An overflowing value maps to "no limit", not to a truncated
+/// value that is wrong but looks plausible.
+#[must_use]
+pub fn new_rate_limiter(requests_per_second: u64) -> Option<RateLimiter> {
+    let rate = NonZeroU32::new(u32::try_from(requests_per_second).ok()?)?;
+    Some(RateLimiter::direct(Quota::per_second(rate).allow_burst(NonZeroU32::MIN)))
+}
+
 /// Options for fetching data from node
 #[derive(Clone, Debug)]
 pub struct Source {
@@ -380,7 +392,7 @@ impl Source {
         let chain_id = provider
             .get_chain_id()
             .await
-            .map_err(|_| CollectError::RPCError("could not get chain_id".to_string()))?;
+            .map_err(|e| CollectError::RPCError(format!("could not get chain_id: {e}")))?;
 
         let max_concurrent_requests =
             max_concurrent_requests.unwrap_or(DEFAULT_MAX_CONCURRENT_REQUESTS);
@@ -394,21 +406,7 @@ impl Source {
             None
         };
 
-        // Burst of 1 keeps the cap a hard ceiling — matches the CLI path in
-        // crates/cli/src/parse/source.rs. Use `const ONE` so the unwrap is
-        // proven at compile time, not at call time.
-        const ONE: NonZeroU32 = match NonZeroU32::new(1) {
-            Some(n) => n,
-            None => unreachable!(),
-        };
-        let rate_limiter = requests_per_second
-            .filter(|&rps| rps > 0)
-            .and_then(|rps| u32::try_from(rps).ok())
-            .and_then(NonZeroU32::new)
-            .map(|value| {
-                let quota = Quota::per_second(value).allow_burst(ONE);
-                RateLimiter::direct(quota)
-            });
+        let rate_limiter = requests_per_second.and_then(new_rate_limiter);
 
         let provider = TriodionProvider::new_http(parsed_rpc_url);
 
@@ -455,7 +453,7 @@ impl Source {
         let chain_id = provider
             .get_chain_id()
             .await
-            .map_err(|_| CollectError::RPCError("could not get l1 chain_id".to_string()))?;
+            .map_err(|e| CollectError::RPCError(format!("could not get l1 chain_id: {e}")))?;
         self.l1_provider = Some(provider);
         self.l1_chain_id = Some(chain_id);
         self.l1_rpc_url = Some(l1_rpc_url);
@@ -1768,6 +1766,42 @@ fn parse_geth_diff_object(map: serde_json::Map<String, serde_json::Value>) -> Re
 fn is_retry_error(error: &CollectError) -> bool {
     let CollectError::ProviderError(rpc_err) = error else { return false };
     rpc_err.as_error_resp().is_some_and(|payload| payload.is_retry_err())
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unreachable_endpoint_reports_its_cause() {
+        // Port 1 refuses the connection at once, so this needs no network.
+        let error = Source::init(Some("http://127.0.0.1:1".to_string())).await.err();
+        let Some(CollectError::RPCError(message)) = error else {
+            panic!("expected an RPCError, got {error:?}");
+        };
+        assert!(message.starts_with("could not get chain_id: "), "{message}");
+        assert!(message.len() > "could not get chain_id: ".len(), "the cause is missing");
+    }
+
+    #[test]
+    fn zero_means_no_limit() {
+        assert!(new_rate_limiter(0).is_none());
+    }
+
+    #[test]
+    fn a_rate_above_u32_max_means_no_limit_not_a_truncated_one() {
+        assert!(new_rate_limiter(u64::from(u32::MAX) + 1).is_none());
+    }
+
+    #[test]
+    fn the_burst_is_one_so_a_second_immediate_request_must_wait() {
+        // Two back-to-back checks are far inside one 200 ms slot at 5/s, so the
+        // second is refused only if the burst is 1. A governor release that
+        // changed the default burst back to the full rate would fail here.
+        let limiter = new_rate_limiter(5).expect("5 req/s is a valid limit");
+        assert!(limiter.check().is_ok());
+        assert!(limiter.check().is_err());
+    }
 }
 
 #[cfg(test)]

@@ -6494,7 +6494,6 @@ dependencies = [
  "color-print",
  "colored",
  "eyre",
- "governor",
  "hex",
  "mesc",
  "polars",

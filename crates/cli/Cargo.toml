@@ -25,7 +25,6 @@ color-print = { workspace = true }
 colored = { workspace = true }
 triodion-core = { workspace = true }
 eyre = { workspace = true }
-governor = { workspace = true }
 hex = { workspace = true }
 mesc = { workspace = true }
 polars = { workspace = true }

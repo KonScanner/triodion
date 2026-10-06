@@ -321,14 +321,11 @@ async fn get_latest_timestamp(source: Arc<Source>) -> Result<u64, ParseError> {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
-
     use alloy::{
         providers::ProviderBuilder,
         rpc::client::{BuiltInConnectionString, ClientBuilder, RpcClient},
         transports::layers::RetryBackoffLayer,
     };
-    use governor::{Quota, RateLimiter};
 
     use super::*;
     use triodion_core::SourceLabels;
@@ -358,9 +355,7 @@ mod tests {
             .map_err(ParseError::ProviderError)
             .unwrap();
         let provider = ProviderBuilder::default().connect_client(client);
-        let quota = Quota::per_second(NonZeroU32::new(15).unwrap())
-            .allow_burst(NonZeroU32::new(1).unwrap());
-        let rate_limiter = Some(RateLimiter::direct(quota));
+        let rate_limiter = triodion_core::new_rate_limiter(15);
         let semaphore = tokio::sync::Semaphore::new(max_concurrent_requests as usize);
 
         Some(Source {

@@ -1,3 +1,4 @@
+import pathlib
 import tempfile
 
 import pytest
@@ -34,11 +35,12 @@ def test_file_output(query, format):
     if extension != 'parquet':
         query = dict(query, **{extension: True})
     result = triodion.freeze(output_dir=output_dir, **query)
+    assert result['n_errored'] == 0
     for datatype in query['datatype']:
-        path = result['paths'][datatype]
-        assert isinstance(path, list) and len(path) == 1
-        path = path[0]
-        df_freeze = reader(path)
+        # The freeze summary carries counts only, not output paths.
+        paths = list(pathlib.Path(output_dir).glob(f'*__{datatype}__*.{extension}'))
+        assert len(paths) == 1, paths
+        df_freeze = reader(paths[0])
         query_without_datatype = dict(query)
         del query_without_datatype['datatype']
         df_collect = triodion.collect(datatype, **query_without_datatype)

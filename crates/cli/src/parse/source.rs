@@ -6,9 +6,7 @@ use alloy::{
     rpc::client::{BuiltInConnectionString, ClientBuilder, RpcClient},
     transports::layers::RetryBackoffLayer,
 };
-use governor::{Quota, RateLimiter};
 use polars::prelude::*;
-use std::num::NonZeroU32;
 use triodion_core::{ParseError, Source, SourceLabels, TriodionProvider};
 
 pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
@@ -30,16 +28,8 @@ pub(crate) async fn parse_source(args: &Args) -> Result<Source, ParseError> {
     // Arbitrum-stack chain.
     let provider = TriodionProvider::new(client);
     let chain_id = provider.get_chain_id().await.map_err(ParseError::ProviderError)?;
-    let rate_limiter = match args.requests_per_second {
-        Some(rate_limit) => match (NonZeroU32::new(1), NonZeroU32::new(rate_limit)) {
-            (Some(one), Some(value)) => {
-                let quota = Quota::per_second(value).allow_burst(one);
-                Some(RateLimiter::direct(quota))
-            }
-            _ => None,
-        },
-        None => None,
-    };
+    let rate_limiter =
+        args.requests_per_second.and_then(|rps| triodion_core::new_rate_limiter(rps.into()));
 
     // process concurrency info
     let max_concurrent_requests = args.max_concurrent_requests.unwrap_or(100);

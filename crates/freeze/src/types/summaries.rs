@@ -284,10 +284,8 @@ pub(crate) fn print_triodion_intro(
 
 fn print_chunks(chunks: &[Partition], align: Option<bool>, reorg_buffer: Option<u64>) {
     let stats = crate::types::partitions::meta_chunks_stats(chunks);
-    for (dim, dim_stats) in [(Dim::BlockNumber, stats.block_numbers)].iter() {
-        if let Some(dim_stats) = dim_stats {
-            print_chunk(dim, dim_stats, align, reorg_buffer)
-        }
+    if let Some(dim_stats) = &stats.block_numbers {
+        print_chunk(&Dim::BlockNumber, dim_stats, align, reorg_buffer)
     }
 
     // NOTE: this branch is not exhaustive

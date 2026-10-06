@@ -1,7 +1,8 @@
 """Tests that run without an Ethereum endpoint.
 
-Everything else in this directory needs live chain data and is skipped when no
-endpoint is configured. These do not: they cover the package surface and the
+The `rpc`-marked modules in this directory need live chain data and are skipped
+when no endpoint is configured; test_offline_rpc.py replays recorded data
+instead. These need neither: they cover the package surface and the
 error path, so a CI run with no `ETH_RPC_URL` still proves that the wheel
 builds, the extension module imports, and a missing endpoint is reported
 usefully rather than as an opaque crash.

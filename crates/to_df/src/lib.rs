@@ -3,7 +3,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{ItemStruct, parse_macro_input};
+use syn::{ItemStruct, Path, Token, parse_macro_input, punctuated::Punctuated};
 
 /// implements ToDataFrames and ColumnData for struct
 #[proc_macro_attribute]
@@ -11,19 +11,16 @@ pub fn to_df(attrs: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ItemStruct);
 
     // parse input args
-    let attrs = parse_macro_input!(attrs as syn::AttributeArgs);
-    let datatypes: Vec<_> = attrs
-        .into_iter()
-        .map(|arg| {
-            if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = arg {
-                path
-            } else {
-                panic!("Expected Meta::Path");
-            }
-        })
-        .collect();
+    // A non-path argument is a parse error reported at its own span.
+    let datatypes: Vec<Path> =
+        parse_macro_input!(attrs with Punctuated::<Path, Token![,]>::parse_terminated)
+            .into_iter()
+            .collect();
     if datatypes.is_empty() {
-        panic!("At least one datatype must be specified");
+        // A panic here surfaces as an unspanned "proc macro panicked" note.
+        return syn::Error::new(Span::call_site(), "At least one datatype must be specified")
+            .to_compile_error()
+            .into();
     }
 
     let name = &input.ident;

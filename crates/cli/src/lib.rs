@@ -15,6 +15,8 @@ mod run;
 
 // used in main.rs but not lib.rs
 use eyre as _;
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+use tikv_jemallocator as _;
 use tokio as _;
 
 pub use args::Args;

@@ -57,23 +57,6 @@ enables memory-exhaustion denial of service. Fixed in >= 0.41.0.
 Same dependency chain, same blocking pin, and same reachability argument as
 RUSTSEC-2026-0194 above.
 """ },
-    { id = "RUSTSEC-2026-0253", reason = """
-lru 0.16.4: potential use-after-free due to lack of panic safety in
-`LruCache::pop()`.
-
-A fix DOES exist -- the advisory records `patched = [">= 0.18.2"]` -- but we
-cannot take it. alloy-provider 2.0.5 declares `lru = "^0.16"`, so 0.18.2 is
-semver-incompatible with it and the resolver refuses:
-  $ cargo update -p lru --precise 0.18.2
-  error: failed to select a version for the requirement `lru = "^0.16"`
-The fix arrives when alloy-provider widens that requirement.
-
-Reached only as alloy-provider 2.0.5 -> lru 0.16.4, where it backs the internal
-block cache. Triggering the bug needs a panicking `Drop` on a stored key inside
-`catch_unwind`; alloy's key type is a plain block identifier.
-
-Re-test with: cargo update -p lru --precise 0.18.2
-""" },
     { id = "RUSTSEC-2025-0141", reason = """
 bincode 2.0.1 is unmaintained. Transitive only: polars-utils 0.55.2 -> bincode.
 Nothing in triodion depends on bincode directly, and polars chooses its own
@@ -81,15 +64,9 @@ serialisation crate. Drop this entry when polars moves off bincode.
 """ },
     { id = "RUSTSEC-2024-0436", reason = """
 paste 1.0.15 is unmaintained. Transitive only, via
-alloy-primitives 1.6.0 -> paste. It is a proc-macro used at compile time, so it
+alloy-primitives 1.7.3 -> paste. It is a proc-macro used at compile time, so it
 contributes no runtime code to the shipped binary. Drop this entry when alloy
 moves off paste.
-""" },
-    { id = "RUSTSEC-2026-0173", reason = """
-proc-macro-error2 2.0.1 is unmaintained. Transitive only, via
-alloy-sol-macro 1.6.0 -> proc-macro-error2. Compile-time only, same argument as
-paste above. Note that `cargo build` already prints a future-incompatibility
-warning for this crate, so it is on a clock regardless of the advisory.
 """ },
 ]
 

@@ -9,6 +9,10 @@ mod run;
 pub use args::Args;
 use eyre::Result;
 
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[tokio::main]
 #[allow(unreachable_code)]
 #[allow(clippy::needless_return)]

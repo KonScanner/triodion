@@ -27,12 +27,7 @@ use alloy::{
     serde::WithOtherFields,
     transports::{RpcError, TransportErrorKind, http::reqwest::Url},
 };
-use governor::{
-    Quota,
-    clock::DefaultClock,
-    middleware::NoOpMiddleware,
-    state::{InMemoryState, direct::NotKeyed},
-};
+use governor::Quota;
 use std::num::NonZeroU32;
 use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
 
@@ -44,8 +39,9 @@ use crate::{
     },
 };
 
-/// RateLimiter based on governor crate
-pub type RateLimiter = governor::RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
+/// RateLimiter based on governor crate. Named through governor's own alias so
+/// the clock and middleware type parameters track the governor release.
+pub type RateLimiter = governor::DefaultDirectRateLimiter;
 
 /// Options for fetching data from node
 #[derive(Clone, Debug)]

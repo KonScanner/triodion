@@ -73,6 +73,8 @@ The `triodion-*` crates are not published to crates.io. Install from git or from
 
 This method requires having rust installed. See [rustup](https://rustup.rs/) for instructions.
 
+On Linux and macOS the binary uses jemalloc as its memory allocator, which is faster for triodion's workload. Building it needs `make` and a C compiler. To build without jemalloc, add `--no-default-features` to either `cargo install` command. Windows always uses the system allocator.
+
 Make sure that `~/.cargo/bin` is on your `PATH`. One way to do this is by adding the line `export PATH="$HOME/.cargo/bin:$PATH"` to your `~/.bashrc` or `~/.profile`.
 
 ### Python Installation

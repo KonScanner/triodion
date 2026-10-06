@@ -42,11 +42,11 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         target: [x86_64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha }}
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Build wheels
@@ -57,7 +57,7 @@ jobs:
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # upload-artifact v4 rejects a second upload to a name that already
           # exists, where v3 silently merged them. Every job here used the one
@@ -75,11 +75,11 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         target: [x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha }}
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           architecture: ${{ matrix.target }}
@@ -90,7 +90,7 @@ jobs:
           args: ${{ env.MATURIN_ARGS_COMMON }} --interpreter python${{ matrix.python-version }}
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.target }}-py${{ matrix.python-version }}
           path: dist
@@ -112,17 +112,20 @@ jobs:
         # such entries would leave only the last one standing and every job
         # would build aarch64. Repeating the `target` key restricts each entry
         # to the combinations it matches, and adds `runner` to just those.
+        #
+        # `macos-13` was the Intel image here until GitHub retired it, and a
+        # job on a retired label never starts. `macos-15-intel` replaces it.
         include:
           - target: x86_64
-            runner: macos-13
+            runner: macos-15-intel
           - target: aarch64
             runner: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha }}
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Build wheels
@@ -132,7 +135,7 @@ jobs:
           args: ${{ env.MATURIN_ARGS_COMMON }} --interpreter python${{ matrix.python-version }}
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.target }}-py${{ matrix.python-version }}
           path: dist
@@ -140,7 +143,7 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha }}
       - name: Build sdist
@@ -149,7 +152,7 @@ jobs:
           command: sdist
           args: --out dist --manifest-path crates/python/Cargo.toml
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
           path: dist
@@ -169,7 +172,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           # Collect every per-job artifact back into one directory. This pair
           # of keys replaces what v3 did implicitly with a shared name.

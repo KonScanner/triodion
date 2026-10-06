@@ -6,6 +6,8 @@ target
 *.parquet
 *.parquet_tmp
 *.json
+# Recorded RPC responses that python_tests/test_offline_rpc.py replays.
+!crates/python/python_tests/fixtures/*.json
 *.json_tmp
 *.env
 *._tmp

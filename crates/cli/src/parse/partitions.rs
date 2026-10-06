@@ -4,7 +4,7 @@ use super::{
     timestamps,
 };
 use crate::args::Args;
-use rand::{seq::SliceRandom, thread_rng};
+use rand::seq::SliceRandom;
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use triodion_core::{
     AddressChunk, CallDataChunk, Datatype, Dim, ParseError, Partition, PartitionLabels, SlotChunk,
@@ -112,8 +112,7 @@ pub(crate) async fn parse_partitions(
         Some("normal") => {}
         Some("reverse") => partitions.reverse(),
         Some("random") => {
-            let mut rng = thread_rng();
-            partitions.shuffle(&mut rng);
+            partitions.shuffle(&mut rand::rng());
         }
         _ => {
             return Err(ParseError::ParseError(

@@ -53,13 +53,13 @@ crate-type = ["cdylib"]
 # wheel-distribution win to justify the verification cost. Revisit if we
 # ever publish triodion wheels publicly.
 [dependencies]
-triodion-cli        = { version = "0.4.0", path = "../cli" }
+triodion-cli        = { version = "0.4.0", path = "../cli", default-features = false }
 triodion-core       = { version = "0.4.0", path = "../freeze" }
 polars              = { version = "0.55", features = ["parquet", "string_encoding", "lazy", "binary_encoding", "json", "dtype-struct"] }
 pyo3                = { version = "0.29", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 pyo3-polars         = "0.28"
-tokio               = { version = "1.52", features = ["macros", "rt-multi-thread", "sync"] }
+tokio               = { version = "1.53", features = ["macros", "rt-multi-thread", "sync"] }
 
 [build-dependencies]
 pyo3-build-config = "0.29"
@@ -70,3 +70,10 @@ pyo3-build-config = "0.29"
 # setting has to be repeated here. There are no truncating casts in this crate
 # today; the lint is what keeps it that way.
 cast_possible_truncation = "deny"
+
+# Mirrors [profile.release] in the root Cargo.toml, which this separate
+# workspace does not inherit. maturin builds the wheels with this profile. The
+# root file records the measurements behind the choice.
+[profile.release]
+lto = "thin"
+codegen-units = 1

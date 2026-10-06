@@ -35,5 +35,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+
+[features]
+default = ["jemalloc"]
+# Sets jemalloc as the global allocator of the `triodion` binary. The library
+# never sets an allocator, so crates/python turns this off and does not build
+# jemalloc's C sources for nothing.
+jemalloc = ["dep:tikv-jemallocator"]
+
 [lints]
 workspace = true

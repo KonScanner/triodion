@@ -43,7 +43,7 @@ triodion-cli = { version = "0.4.4", path = "./crates/cli" }
 triodion-core = { version = "0.4.4", path = "./crates/freeze" }
 triodion-macros = { version = "0.4.4", path = "./crates/to_df" }
 
-alloy = { version = "2.0.5", features = [
+alloy = { version = "2.5.0", features = [
     "full",
     # `json-rpc` re-exports alloy-json-rpc, which is already in the tree via
     # alloy-transport. We need `ErrorPayload` by name to construct the exact
@@ -76,22 +76,19 @@ chrono = { version = "0.4", features = ["serde"] }
 # the next real flag. `crates/cli/src/argv.rs` restores the behaviour with an
 # argv normalisation pass in front of the parser instead.
 clap = { version = "4.6.6", features = ["derive", "color", "unstable-styles"] }
-colored = "2.2.0"
+colored = "3.1.1"
 color-print = "0.3.7"
 eyre = "0.6.12"
 futures = "0.3.32"
-# governor stays on 0.6.x: 0.10 renames `NoOpMiddleware` and reshapes the
-# `RateLimiter<_, _, _, _>` type alias used in crates/freeze/src/types/sources.rs.
-# Holding the latest 0.6 patch until we decide to migrate the alias.
-governor = "0.6.3"
+governor = "0.10.4"
 hex = "0.4.3"
 heck = "0.5.0"
 indexmap = "2.14.0"
-indicatif = "0.18.4"
+indicatif = "0.18.6"
 # lazy_static intentionally removed: not used by any triodion crate (only pulled
 # in transitively by colored/color-print). LazyLock (std, since 1.80) is the
 # modern replacement if we ever need one in our own code.
-mesc = "0.1.4"
+mesc = "0.3.0"
 # polars 0.55 is the floor set by pyo3-polars 0.28 (see the pyo3 note below).
 #
 # Known open advisory below this pin: polars-error 0.55 requires
@@ -128,10 +125,7 @@ pyo3 = "0.29"
 pyo3-build-config = "0.29"
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 pyo3-polars = "0.28"
-# rand stays on 0.8.x: 0.9 removed `thread_rng` (renamed `rng`) and rebuilt
-# the `SeedableRng`/`SliceRandom` traits, which `crates/cli/src/parse/partitions.rs`
-# uses. Bumping is a small mechanical refactor — separate work item.
-rand = "0.8.6"
+rand = "0.10.3"
 # regex intentionally removed: the only user was a per-call
 # `Regex::new` inside erc20_metadata's name/symbol cleanup, which compiled a
 # fresh regex on every row. That helper is gone — `multicall::remove_control_characters`
@@ -140,9 +134,26 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 thiserror = "2.0.18"
 thousands = "0.2.0"
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync"] }
+# Global allocator for the `triodion` binary only, behind triodion-cli's
+# default `jemalloc` feature. Same benchmark as [profile.release] below, on top
+# of that profile: user CPU 763 -> 644 ms, peak memory 170 -> 205 MB.
+# mimalloc was faster in wall time (204 ms vs 238 ms) but peaked at 466 MB.
+# jemalloc does not build for MSVC, so Windows keeps the system allocator.
+tikv-jemallocator = "0.7.0"
+tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread", "sync"] }
 
 [profile.dev]
 incremental = true
 debug = 1
 codegen-units = 32
+
+# Measured, not assumed. 50 recorded mainnet blocks (15,520 transactions)
+# replayed from a local JSON-RPC server, `triodion transactions`, hyperfine,
+# 30 runs each. Process user CPU against Cargo's release defaults:
+#   default (thin-local LTO, 16 codegen units)  781 ms  73 MB  173 s build
+#   lto = "thin", codegen-units = 1             691 ms  48 MB  296 s build
+#   lto = "fat",  codegen-units = 1             710 ms  44 MB  413 s build
+# Fat LTO buys nothing over thin here and costs two more minutes per build.
+[profile.release]
+lto = "thin"
+codegen-units = 1

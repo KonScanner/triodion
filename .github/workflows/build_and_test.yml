@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -40,6 +40,12 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo clippy --workspace --all-targets --all-features
+        env:
+          RUSTFLAGS: -Dwarnings
+      # `--all-features` above never builds the binary without its default
+      # `jemalloc` feature, which is the build `cargo install
+      # --no-default-features` produces and the one Windows MSVC gets anyway.
+      - run: cargo clippy -p triodion-cli --all-targets --no-default-features
         env:
           RUSTFLAGS: -Dwarnings
 
@@ -51,13 +57,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Deliberately no `dtolnay/rust-toolchain` step. `crates/python` carries
       # its own `rust-toolchain.toml` pinning the channel and the components it
       # needs, and rustup honours that file for every cargo invocation made
       # from that directory. Installing a second toolchain here would download
       # it and then never use it.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           # `build.rs` runs `pyo3-build-config`, which needs a real interpreter
           # to resolve the target Python version. pyo3 0.29 requires >= 3.8.
@@ -84,7 +90,8 @@ jobs:
       # directory the two steps above just populated, so maturin compiles
       # incrementally instead of from scratch.
       - name: Install Python test dependencies
-        run: python -m pip install --upgrade pip maturin pytest polars
+        # Same floor as `dependencies` in crates/python/pyproject.toml.
+        run: python -m pip install --upgrade pip maturin pytest 'polars>=2'
       - name: Build and install the triodion wheel
         working-directory: crates/python
         run: |
@@ -97,7 +104,9 @@ jobs:
           # chain data and carries the `rpc` marker; conftest.py skips those
           # when no endpoint is configured, so this job is green without one
           # while still proving the wheel builds, the extension imports, and
-          # the missing-endpoint path reports itself properly. Add an
+          # the missing-endpoint path reports itself properly.
+          # test_offline_rpc.py replays recorded blocks from a local server,
+          # so the Rust-to-polars DataFrame hand-off runs here too. Add an
           # ETH_RPC_URL repository secret and the marked tests start running
           # here with no other change.
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
@@ -117,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
@@ -133,7 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt

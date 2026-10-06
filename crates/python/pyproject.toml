@@ -18,6 +18,16 @@ description = "triodion (KonScanner fork of cryo) — blockchain data extractor 
 # 3.9 are both past end of life, so the floor is 3.10. Keep this in agreement
 # with the matrix in .github/workflows/python_release.yml.
 requires-python = ">=3.10"
+# polars is a runtime requirement, not an optional extra: every `collect` call
+# returns a polars DataFrame, and the extension hands each column to the
+# installed polars through `Series._import`. It was undeclared before, so pip
+# would install triodion next to any polars, or none at all.
+#
+# The floor is 2. The Rust side is still polars 0.55 with pyo3-polars 0.28,
+# because no Rust crate for polars 2.0 is published yet. The hand-off was
+# verified against polars 2.0.0 by python_tests/test_offline_rpc.py, which
+# runs in CI without an endpoint. Rerun it when either side moves.
+dependencies = ["polars>=2"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",

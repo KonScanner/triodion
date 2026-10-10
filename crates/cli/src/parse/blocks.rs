@@ -3,106 +3,10 @@ use std::collections::HashMap;
 
 use triodion_core::{BlockChunk, ChunkData, Datatype, ParseError, Source, Subchunk, Table};
 
-use crate::{args::Args, parse::parse_utils::f64_to_u64};
-
-pub(crate) async fn parse_blocks(
-    args: &Args,
-    source: Arc<Source>,
-) -> Result<(Option<Vec<Option<String>>>, Option<Vec<BlockChunk>>), ParseError> {
-    let (files, explicit_numbers): (Vec<&String>, Vec<&String>) = match &args.blocks {
-        Some(blocks) => blocks.iter().partition(|tx| std::path::Path::new(tx).exists()),
-        None => return Ok((None, None)),
-    };
-
-    let (file_labels, file_chunks) = if !files.is_empty() {
-        let mut file_labels = Vec::new();
-        let mut file_chunks = Vec::new();
-        for path in files {
-            let column = if path.contains(':') {
-                path.split(':')
-                    .next_back()
-                    .ok_or(ParseError::ParseError("could not parse txs path column".to_string()))?
-            } else {
-                "block_number"
-            };
-            let integers = read_integer_column(path, column)
-                .map_err(|_e| ParseError::ParseError("could not read input".to_string()))?;
-            let chunk = BlockChunk::Numbers(integers);
-            let chunk_label = path
-                .split("__")
-                .last()
-                .and_then(|s| s.strip_suffix(".parquet").map(|s| s.to_string()));
-            file_labels.push(chunk_label);
-            file_chunks.push(chunk);
-        }
-        (Some(file_labels), Some(file_chunks))
-    } else {
-        (None, None)
-    };
-
-    let explicit_chunks = if !explicit_numbers.is_empty() {
-        // parse inputs into BlockChunks
-        let mut block_chunks = Vec::new();
-        for explicit_number in explicit_numbers {
-            let outputs = parse_block_inputs(explicit_number, source.clone()).await?;
-            block_chunks.extend(outputs);
-        }
-        postprocess_block_chunks(block_chunks, args, source).await?
-    } else {
-        Vec::new()
-    };
-
-    let mut block_chunks = Vec::new();
-    let labels = match (file_labels, file_chunks) {
-        (Some(file_labels), Some(file_chunks)) => {
-            let mut labels = Vec::new();
-            labels.extend(file_labels);
-            block_chunks.extend(file_chunks);
-            labels.extend(vec![None; explicit_chunks.len()]);
-            Some(labels)
-        }
-        _ => None,
-    };
-    block_chunks.extend(explicit_chunks);
-    Ok((labels, Some(block_chunks)))
-}
-
-fn read_integer_column(path: &str, column: &str) -> Result<Vec<u64>, ParseError> {
-    let file = std::fs::File::open(path)
-        .map_err(|_e| ParseError::ParseError("could not open file path".to_string()))?;
-
-    let df = ParquetReader::new(file)
-        .with_columns(Some(vec![column.to_string()]))
-        .finish()
-        .map_err(|_e| ParseError::ParseError("could not read data from column".to_string()))?;
-
-    let series = df
-        .column(column)
-        .map_err(|_e| ParseError::ParseError("could not get column".to_string()))?
-        .unique()
-        .map_err(|_e| ParseError::ParseError("could not get column".to_string()))?;
-
-    match series.u32() {
-        Ok(ca) => ca
-            .iter()
-            .map(|v| {
-                v.ok_or_else(|| ParseError::ParseError("block number missing".to_string()))
-                    .map(|data| data.into())
-            })
-            .collect(),
-        Err(_e) => match series.u64() {
-            Ok(ca) => ca
-                .iter()
-                .map(|v| {
-                    v.ok_or_else(|| ParseError::ParseError("block number missing".to_string()))
-                })
-                .collect(),
-            Err(_e) => {
-                Err(ParseError::ParseError("could not convert to integer column".to_string()))
-            }
-        },
-    }
-}
+use crate::{
+    args::Args,
+    parse::{chunk_inputs::RangePosition, parse_utils::f64_to_u64},
+};
 
 pub(crate) async fn postprocess_block_chunks(
     block_chunks: Vec<BlockChunk>,
@@ -146,7 +50,7 @@ pub(crate) async fn get_default_block_chunks(
 }
 
 /// parse block numbers to freeze
-async fn parse_block_inputs(
+pub(crate) async fn parse_block_inputs(
     inputs: &str,
     source: Arc<Source>,
 ) -> Result<Vec<BlockChunk>, ParseError> {
@@ -166,13 +70,6 @@ async fn parse_block_inputs(
             Ok(chunks)
         }
     }
-}
-
-#[derive(Clone, Debug)]
-enum RangePosition {
-    First,
-    Last,
-    None,
 }
 
 async fn parse_block_token(
@@ -394,7 +291,15 @@ async fn apply_reorg_buffer(
                     return Err(ParseError::ParseError("reorg buffer parse error".to_string()))
                 }
             };
-            let max_allowed = latest_block - reorg_filter;
+            // A buffer deeper than the chain leaves no block old enough, and a
+            // run that silently collects nothing hides the mistake. The
+            // unchecked subtraction panicked here in debug and wrapped to
+            // `u64::MAX` in release, which kept every block.
+            let Some(max_allowed) = latest_block.checked_sub(reorg_filter) else {
+                return Err(ParseError::ParseError(format!(
+                    "reorg buffer {reorg_filter} is deeper than the chain head {latest_block}"
+                )))
+            };
             Ok(block_chunks
                 .into_iter()
                 .filter_map(|x| match x.max_value() {
@@ -424,6 +329,7 @@ mod tests {
     // before they were reported. `Asserter` is alloy's supported mock: a FIFO
     // queue of canned responses behind a real provider.
     use alloy::{providers::ProviderBuilder, transports::mock::Asserter};
+    use triodion_core::SourceConfig;
 
     use super::*;
 
@@ -435,22 +341,7 @@ mod tests {
 
     async fn block_token_test_helper(tests: Vec<(BlockTokenTest<'_>, bool)>, asserter: Asserter) {
         let provider = ProviderBuilder::default().connect_mocked_client(asserter);
-        let source = Source {
-            provider,
-            semaphore: Arc::new(None),
-            rate_limiter: Arc::new(None),
-            chain_id: 1,
-            inner_request_size: 1,
-            max_concurrent_chunks: None,
-            rpc_url: "".to_string(),
-            labels: triodion_core::SourceLabels::default(),
-            l1_provider: None,
-            l1_chain_id: None,
-            l1_rpc_url: None,
-            state_override_support: Arc::new(Default::default()),
-            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            beacon: None,
-        };
+        let source = Source::from_provider(provider, 1, &SourceConfig::new(String::new()));
         let source = Arc::new(source);
         for (test, res) in tests {
             match test {
@@ -503,22 +394,8 @@ mod tests {
 
     async fn block_input_test_helper(tests: Vec<(BlockInputTest<'_>, bool)>, asserter: Asserter) {
         let provider = ProviderBuilder::default().connect_mocked_client(asserter);
-        let source = Arc::new(Source {
-            provider,
-            chain_id: 1,
-            rpc_url: "".to_string(),
-            inner_request_size: 1,
-            semaphore: Arc::new(None),
-            max_concurrent_chunks: Some(1),
-            rate_limiter: Arc::new(None),
-            labels: triodion_core::SourceLabels::default(),
-            l1_provider: None,
-            l1_chain_id: None,
-            l1_rpc_url: None,
-            state_override_support: Arc::new(Default::default()),
-            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            beacon: None,
-        });
+        let source =
+            Arc::new(Source::from_provider(provider, 1, &SourceConfig::new(String::new())));
         for (test, res) in tests {
             match test {
                 BlockInputTest::WithMock((inputs, expected, _latest)) => {
@@ -582,22 +459,7 @@ mod tests {
 
     async fn block_number_test_helper(tests: Vec<(BlockNumberTest<'_>, bool)>, asserter: Asserter) {
         let provider = ProviderBuilder::default().connect_mocked_client(asserter);
-        let source = Source {
-            provider,
-            semaphore: Arc::new(None),
-            rate_limiter: Arc::new(None),
-            chain_id: 1,
-            inner_request_size: 1,
-            max_concurrent_chunks: Some(1),
-            rpc_url: "".to_string(),
-            labels: triodion_core::SourceLabels::default(),
-            l1_provider: None,
-            l1_chain_id: None,
-            l1_rpc_url: None,
-            state_override_support: Arc::new(Default::default()),
-            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            beacon: None,
-        };
+        let source = Source::from_provider(provider, 1, &SourceConfig::new(String::new()));
         let source = Arc::new(source);
         for (test, res) in tests {
             match test {
@@ -741,33 +603,17 @@ mod tests {
         block_number_test_helper(tests, asserter).await;
     }
 
-    /// Write `column` to a parquet file and read it back through
-    /// `read_integer_column`. This covers the polars 0.55 change where
-    /// `&ChunkedArray<UInt32Type>` and `&ChunkedArray<UInt64Type>` stopped
-    /// implementing `IntoIterator`.
-    fn read_integer_column_helper(name: &str, column: Column) {
-        let path = std::env::temp_dir().join(format!("triodion_{}.parquet", name));
-        let mut df = DataFrame::new(3, vec![column]).unwrap();
+    #[tokio::test]
+    async fn a_reorg_buffer_deeper_than_the_chain_is_an_error() {
+        let asserter = Asserter::new();
+        asserter.push_success(&5u64);
+        let provider = ProviderBuilder::default().connect_mocked_client(asserter);
+        let source =
+            Arc::new(Source::from_provider(provider, 1, &SourceConfig::new(String::new())));
 
-        let file = std::fs::File::create(&path).unwrap();
-        ParquetWriter::new(file).finish(&mut df).unwrap();
-
-        let mut read = read_integer_column(path.to_str().unwrap(), "number").unwrap();
-        std::fs::remove_file(&path).unwrap();
-
-        read.sort_unstable();
-        assert_eq!(read, vec![10u64, 20, 30]);
-    }
-
-    #[test]
-    fn read_integer_column_reads_u32() {
-        let column = Column::new("number".into(), vec![10u32, 20, 30]);
-        read_integer_column_helper("blocks_u32", column);
-    }
-
-    #[test]
-    fn read_integer_column_reads_u64() {
-        let column = Column::new("number".into(), vec![10u64, 20, 30]);
-        read_integer_column_helper("blocks_u64", column);
+        let error = apply_reorg_buffer(vec![BlockChunk::Numbers(vec![1])], 10, source)
+            .await
+            .expect_err("no block is 10 blocks behind a head of 5");
+        assert!(error.to_string().contains("deeper than the chain head 5"), "{error}");
     }
 }

@@ -6548,6 +6548,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "pyo3-polars",
+ "serde_json",
  "tokio",
  "triodion-cli",
  "triodion-core",

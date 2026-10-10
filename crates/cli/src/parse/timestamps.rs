@@ -2,115 +2,14 @@ use alloy::rpc::types::BlockTransactionsKind;
 use polars::prelude::*;
 use triodion_core::{BlockChunk, ParseError, Source};
 
-use crate::{
-    Args,
-    parse::{
-        blocks::{block_range_to_block_chunk, postprocess_block_chunks},
-        parse_utils::f64_to_u64,
-    },
+use crate::parse::{
+    blocks::block_range_to_block_chunk, chunk_inputs::RangePosition, parse_utils::f64_to_u64,
 };
 
 use super::blocks::get_latest_block_number;
 
-pub(crate) async fn parse_timestamps(
-    args: &Args,
-    source: Arc<Source>,
-) -> Result<(Option<Vec<Option<String>>>, Option<Vec<BlockChunk>>), ParseError> {
-    let (files, explicit_numbers): (Vec<&String>, Vec<&String>) = match &args.timestamps {
-        Some(timestamp) => timestamp.iter().partition(|tx| std::path::Path::new(tx).exists()),
-        None => return Ok((None, None)),
-    };
-
-    let (file_labels, file_chunks) = if !files.is_empty() {
-        let mut file_labels = Vec::new();
-        let mut file_chunks = Vec::new();
-        for path in files {
-            let column = if path.contains(':') {
-                path.split(':')
-                    .next_back()
-                    .ok_or(ParseError::ParseError("could not parse txs path column".to_string()))?
-            } else {
-                "timestamp"
-            };
-            let integers = read_integer_column(path, column)
-                .map_err(|_e| ParseError::ParseError("could not read input".to_string()))?;
-            let chunk = BlockChunk::Numbers(integers);
-            let chunk_label = path
-                .split("__")
-                .last()
-                .and_then(|s| s.strip_suffix(".parquet").map(|s| s.to_string()));
-            file_labels.push(chunk_label);
-            file_chunks.push(chunk);
-        }
-        (Some(file_labels), Some(file_chunks))
-    } else {
-        (None, None)
-    };
-
-    let explicit_chunks = if !explicit_numbers.is_empty() {
-        // parse inputs into BlockChunks
-        let mut block_chunks = Vec::new();
-        for explicit_number in explicit_numbers {
-            let outputs = parse_timestamp_inputs(explicit_number, source.clone()).await?;
-            block_chunks.extend(outputs);
-        }
-        postprocess_block_chunks(block_chunks, args, source).await?
-    } else {
-        Vec::new()
-    };
-
-    let mut block_chunks = Vec::new();
-    let labels = match (file_labels, file_chunks) {
-        (Some(file_labels), Some(file_chunks)) => {
-            let mut labels = Vec::new();
-            labels.extend(file_labels);
-            block_chunks.extend(file_chunks);
-            labels.extend(vec![None; explicit_chunks.len()]);
-            Some(labels)
-        }
-        _ => None,
-    };
-    block_chunks.extend(explicit_chunks);
-    Ok((labels, Some(block_chunks)))
-}
-
-fn read_integer_column(path: &str, column: &str) -> Result<Vec<u64>, ParseError> {
-    let file = std::fs::File::open(path)
-        .map_err(|_e| ParseError::ParseError("could not open file path".to_string()))?;
-
-    let df = ParquetReader::new(file)
-        .with_columns(Some(vec![column.to_string()]))
-        .finish()
-        .map_err(|_e| ParseError::ParseError("could not read data from column".to_string()))?;
-
-    let series = df
-        .column(column)
-        .map_err(|_e| ParseError::ParseError("could not get column".to_string()))?
-        .unique()
-        .map_err(|_e| ParseError::ParseError("could not get column".to_string()))?;
-
-    match series.u32() {
-        Ok(ca) => ca
-            .iter()
-            .map(|v| {
-                v.ok_or_else(|| ParseError::ParseError("timestamp missing".to_string()))
-                    .map(|data| data.into())
-            })
-            .collect(),
-        Err(_e) => match series.u64() {
-            Ok(ca) => ca
-                .iter()
-                .map(|v| v.ok_or_else(|| ParseError::ParseError("timestamp missing".to_string())))
-                .collect(),
-            Err(_e) => {
-                Err(ParseError::ParseError("could not convert to integer column".to_string()))
-            }
-        },
-    }
-}
-
 /// parse timestamp numbers to freeze
-async fn parse_timestamp_inputs(
+pub(crate) async fn parse_timestamp_inputs(
     inputs: &str,
     source: Arc<Source>,
 ) -> Result<Vec<BlockChunk>, ParseError> {
@@ -131,12 +30,6 @@ async fn parse_timestamp_inputs(
         }
     }
 }
-enum RangePosition {
-    First,
-    Last,
-    None,
-}
-
 async fn parse_timestamp_token(
     s: &str,
     as_range: bool,
@@ -221,7 +114,13 @@ async fn parse_timestamp_range(
 
     let end_timestamp =
         if second_ref != "latest" && !second_ref.is_empty() && !first_ref.starts_with('-') {
-            end_timestamp - 1
+            // Checked for the reason given in `blocks::parse_block_range`:
+            // `-t 0:0` panicked in debug and wrapped to `u64::MAX` in release.
+            end_timestamp.checked_sub(1).ok_or_else(|| {
+                ParseError::ParseError(
+                    "end_timestamp should not be less than start_timestamp".to_string(),
+                )
+            })?
         } else {
             end_timestamp
         };
@@ -272,63 +171,94 @@ fn scale_timestamp_str_by_metric_unit(
         .and_then(|n| f64_to_u64((metric_scale as f64 * n).round(), "timestamp ref"))
 }
 
-// perform binary search to determine the closest block number smaller than or equal to a given
-// timestamp
+/// Convert the timestamps read from a file to the distinct block numbers
+/// that were current at those times, in ascending order.
+///
+/// Each timestamp is a separate binary search, so a file of `n` timestamps
+/// costs about `n * log2(head)` block reads.
+pub(crate) async fn timestamps_to_block_numbers(
+    timestamps: Vec<u64>,
+    source: Arc<Source>,
+) -> Result<Vec<u64>, ParseError> {
+    let latest_block_number = get_latest_block_number(source.clone()).await?;
+    let mut block_numbers = Vec::with_capacity(timestamps.len());
+    for timestamp in timestamps {
+        block_numbers.push(
+            block_at_timestamp(timestamp, latest_block_number, |number| {
+                block_timestamp(number, source.clone())
+            })
+            .await?,
+        );
+    }
+    block_numbers.sort_unstable();
+    block_numbers.dedup();
+    Ok(block_numbers)
+}
+
+/// A block whose timestamp is at or before `timestamp`; see
+/// [`block_at_timestamp`].
 async fn timestamp_to_block_number(timestamp: u64, source: Arc<Source>) -> Result<u64, ParseError> {
     let latest_block_number = get_latest_block_number(source.clone()).await?;
+    block_at_timestamp(timestamp, latest_block_number, |number| {
+        block_timestamp(number, source.clone())
+    })
+    .await
+}
 
-    let mut l = 0;
-    let mut r = latest_block_number;
-    let mut mid = (l + r) / 2;
-    let mut block = source
-        .get_block(mid, BlockTransactionsKind::Hashes)
-        .await
-        .map_err(|_e| ParseError::ParseError("Error fetching block for timestamp".to_string()))?
-        .unwrap();
-
-    while l <= r {
-        mid = (l + r) / 2;
-        block = source
-            .get_block(mid, BlockTransactionsKind::Hashes)
-            .await
-            .map_err(|_e| ParseError::ParseError("Error fetching block for timestamp".to_string()))?
-            .unwrap();
-
-        #[allow(clippy::comparison_chain)]
-        if block.header.timestamp == timestamp {
-            return Ok(mid);
-        } else if block.header.timestamp < timestamp {
-            l = mid + 1;
-        } else {
-            r = mid - 1;
+/// Binary search over blocks `0..=latest` for the last block whose timestamp
+/// is at or before `timestamp`. A timestamp before block 0 gives block 0.
+///
+/// When several blocks share exactly `timestamp`, as on chains with blocks
+/// shorter than one second, the search returns the first of them that it
+/// probes, which is not always the last.
+///
+/// `timestamp_of` reads the timestamp of one block, so the search can be
+/// tested without a node.
+async fn block_at_timestamp<F, Fut>(
+    timestamp: u64,
+    latest: u64,
+    mut timestamp_of: F,
+) -> Result<u64, ParseError>
+where
+    F: FnMut(u64) -> Fut,
+    Fut: std::future::Future<Output = Result<u64, ParseError>>,
+{
+    let (mut low, mut high) = (0, latest);
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        match timestamp_of(mid).await?.cmp(&timestamp) {
+            std::cmp::Ordering::Equal => return Ok(mid),
+            std::cmp::Ordering::Less => low = mid + 1,
+            // `mid - 1` was unchecked: a timestamp before block 0 panicked in
+            // debug, and in release wrapped to `u64::MAX` and then panicked
+            // on the missing block.
+            std::cmp::Ordering::Greater => match mid.checked_sub(1) {
+                Some(below) => high = below,
+                None => return Ok(0),
+            },
         }
     }
+    Ok(high)
+}
 
-    // If timestamp is between two different blocks, return the lower block.
-    if mid > 0 && block.header.timestamp > timestamp { Ok(mid - 1) } else { Ok(mid) }
+async fn block_timestamp(number: u64, source: Arc<Source>) -> Result<u64, ParseError> {
+    source
+        .get_block(number, BlockTransactionsKind::Hashes)
+        .await
+        .map_err(|_e| ParseError::ParseError("Error fetching block for timestamp".to_string()))?
+        .map(|block| block.header.timestamp)
+        .ok_or_else(|| ParseError::ParseError(format!("block {number} not found")))
 }
 
 async fn get_latest_timestamp(source: Arc<Source>) -> Result<u64, ParseError> {
     let latest_block_number = get_latest_block_number(source.clone()).await?;
-    let latest_block = source
-        .get_block(latest_block_number, BlockTransactionsKind::Hashes)
-        .await
-        .map_err(|_e| ParseError::ParseError("Error fetching latest block".to_string()))?
-        .unwrap();
-
-    Ok(latest_block.header.timestamp)
+    block_timestamp(latest_block_number, source).await
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy::{
-        providers::ProviderBuilder,
-        rpc::client::{BuiltInConnectionString, ClientBuilder, RpcClient},
-        transports::layers::RetryBackoffLayer,
-    };
-
     use super::*;
-    use triodion_core::SourceLabels;
+    use triodion_core::SourceConfig;
 
     /// Build a live `Source`, or `None` when no RPC endpoint is configured.
     ///
@@ -339,41 +269,10 @@ mod tests {
     /// while all 15 triodion-cli tests — including the 10 that need no RPC at
     /// all — silently never ran.
     async fn setup_source() -> Option<Source> {
-        let rpc_url = crate::parse::source::parse_rpc_url(&Args::default()).ok()?;
-        let max_retry = 5;
-        let initial_backoff = 500;
-        let compute_units_per_second = 50;
-        let max_concurrent_requests = 100;
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
-        let connect: BuiltInConnectionString =
-            rpc_url.parse().map_err(ParseError::ProviderError).unwrap();
-        let client: RpcClient = ClientBuilder::default()
-            .layer(retry_layer)
-            .connect_with(connect)
-            .await
-            .map_err(ParseError::ProviderError)
-            .unwrap();
-        let provider = ProviderBuilder::default().connect_client(client);
-        let rate_limiter = triodion_core::new_rate_limiter(15);
-        let semaphore = tokio::sync::Semaphore::new(max_concurrent_requests as usize);
-
-        Some(Source {
-            provider,
-            semaphore: Arc::new(Some(semaphore)),
-            rate_limiter: Arc::new(rate_limiter),
-            chain_id: 1,
-            inner_request_size: 1,
-            max_concurrent_chunks: None,
-            rpc_url: "".to_string(),
-            labels: SourceLabels::default(),
-            l1_provider: None,
-            l1_chain_id: None,
-            l1_rpc_url: None,
-            state_override_support: Arc::new(Default::default()),
-            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            beacon: None,
-        })
+        let rpc_url = crate::parse::source::parse_rpc_url(&crate::Args::default()).ok()?;
+        let config = SourceConfig { requests_per_second: 15, ..SourceConfig::new(rpc_url) };
+        // A configured endpoint that cannot be reached is a failure, not a skip.
+        Some(Source::connect(config).await.expect("ETH_RPC_URL is set but unreachable"))
     }
 
     /// Skip the calling test (returning from it) when no RPC is configured.
@@ -537,33 +436,51 @@ mod tests {
         );
     }
 
-    /// Write `column` to a parquet file and read it back through
-    /// `read_integer_column`. This covers the polars 0.55 change where
-    /// `&ChunkedArray<UInt32Type>` and `&ChunkedArray<UInt64Type>` stopped
-    /// implementing `IntoIterator`.
-    fn read_integer_column_helper(name: &str, column: Column) {
-        let path = std::env::temp_dir().join(format!("triodion_{}.parquet", name));
-        let mut df = DataFrame::new(3, vec![column]).unwrap();
-
-        let file = std::fs::File::create(&path).unwrap();
-        ParquetWriter::new(file).finish(&mut df).unwrap();
-
-        let mut read = read_integer_column(path.to_str().unwrap(), "number").unwrap();
-        std::fs::remove_file(&path).unwrap();
-
-        read.sort_unstable();
-        assert_eq!(read, vec![10u64, 20, 30]);
+    /// Block `n` has timestamp `stamps[n]`. Returns the answer and the number
+    /// of blocks read.
+    async fn search(stamps: &[u64], timestamp: u64) -> (u64, usize) {
+        let reads = std::cell::Cell::new(0);
+        let latest = stamps.len() as u64 - 1;
+        let block = block_at_timestamp(timestamp, latest, |number| {
+            reads.set(reads.get() + 1);
+            let stamp = stamps[usize::try_from(number).unwrap()];
+            async move { Ok(stamp) }
+        })
+        .await
+        .unwrap();
+        (block, reads.get())
     }
 
-    #[test]
-    fn read_integer_column_reads_u32() {
-        let column = Column::new("number".into(), vec![10u32, 20, 30]);
-        read_integer_column_helper("timestamps_u32", column);
+    #[tokio::test]
+    async fn the_search_finds_the_last_block_at_or_before_a_timestamp() {
+        let stamps = [100, 112, 124, 136, 148];
+        assert_eq!(search(&stamps, 124).await.0, 2, "an exact match");
+        assert_eq!(search(&stamps, 130).await.0, 2, "between two blocks");
+        assert_eq!(search(&stamps, 500).await.0, 4, "after the head");
     }
 
-    #[test]
-    fn read_integer_column_reads_u64() {
-        let column = Column::new("number".into(), vec![10u64, 20, 30]);
-        read_integer_column_helper("timestamps_u64", column);
+    #[tokio::test]
+    async fn a_timestamp_before_block_zero_gives_block_zero_not_a_panic() {
+        assert_eq!(search(&[100, 112, 124], 0).await.0, 0);
+        assert_eq!(search(&[100], 99).await.0, 0);
+    }
+
+    #[tokio::test]
+    async fn the_search_reads_each_probed_block_once() {
+        // 1024 blocks need at most 11 reads. The old search read the middle
+        // block twice, once before the loop and once inside it.
+        let stamps: Vec<u64> = (0..1024).map(|n| 1000 + 12 * n).collect();
+        let (_, reads) = search(&stamps, 1000 + 12 * 700 + 5).await;
+        assert!(reads <= 11, "{reads} reads");
+    }
+
+    #[tokio::test]
+    async fn an_empty_timestamp_range_is_an_error_not_an_underflow() {
+        // The mock has no answers queued: the range needs no request.
+        let provider = alloy::providers::ProviderBuilder::default()
+            .connect_mocked_client(alloy::transports::mock::Asserter::new());
+        let source =
+            Arc::new(Source::from_provider(provider, 1, &SourceConfig::new(String::new())));
+        assert!(parse_timestamp_range("0", "0", source).await.is_err());
     }
 }

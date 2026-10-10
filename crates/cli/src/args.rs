@@ -4,6 +4,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{default::Default, path::PathBuf};
+use triodion_core::ParseError;
 
 /// Command line arguments
 #[derive(Parser, Debug, Serialize, Deserialize, Clone, Default)]
@@ -445,6 +446,54 @@ impl Args {
         Self::try_parse_from(crate::argv::normalize(&command, argv))
     }
 
+    /// The arguments of a `triodion` run that passes no flags.
+    ///
+    /// Each field holds its clap default. [`Args::default`] is different: it
+    /// sets each field to the zero value of its type.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn cli_defaults() -> Self {
+        Self::try_parse_from_cli(["triodion"]).expect("an argv with no flags always parses")
+    }
+
+    /// Set the named fields on top of the defaults of a `triodion` run that
+    /// passes no flags.
+    ///
+    /// This is the seam for a programmatic caller, such as the Python module.
+    /// Each key is the name of an `Args` field. A field that is not named, or
+    /// that is named with a `null` value, keeps the default of the CLI, so a
+    /// programmatic run and a `triodion` run start from the same defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::ParseError`] for a key that names no public field,
+    /// and for a value of the wrong type. The message names the key.
+    pub fn from_overrides(overrides: serde_json::Map<String, Value>) -> Result<Self, ParseError> {
+        let to_error = |e: serde_json::Error| ParseError::ParseError(e.to_string());
+        let defaults = Self::try_parse_from_cli(["triodion"])
+            .map_err(|e| ParseError::ParseError(e.to_string()))?;
+        let Value::Object(defaults) = serde_json::to_value(defaults).map_err(to_error)? else {
+            return Err(ParseError::ParseError("Args did not serialize to an object".to_string()))
+        };
+        let mut fields = defaults.clone();
+        for (key, value) in overrides {
+            if key.starts_with('_') || !defaults.contains_key(&key) {
+                return Err(ParseError::ParseError(format!("unexpected keyword argument '{key}'")))
+            }
+            if value.is_null() {
+                continue
+            }
+            // Check each value on its own, so that the error names the key.
+            // A failure of the whole object names only the expected type.
+            let mut probe = defaults.clone();
+            probe.insert(key.clone(), value.clone());
+            serde_json::from_value::<Self>(Value::Object(probe))
+                .map_err(|e| ParseError::ParseError(format!("keyword argument '{key}': {e}")))?;
+            fields.insert(key, value);
+        }
+        serde_json::from_value(Value::Object(fields)).map_err(to_error)
+    }
+
     pub(crate) fn merge_with_precedence(self, other: Args) -> Self {
         let default_struct = Args::default();
 
@@ -509,4 +558,63 @@ fn get_datatype_help() -> &'static str {
     cstr!(
         r#"datatype(s) to collect, use <white><bold>triodion datasets</bold></white> to see all available"#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn overrides(value: Value) -> serde_json::Map<String, Value> {
+        let Value::Object(map) = value else { panic!("the test passes an object") };
+        map
+    }
+
+    #[test]
+    fn no_overrides_gives_the_cli_defaults() {
+        let args = Args::from_overrides(serde_json::Map::new()).expect("the defaults round-trip");
+        assert_eq!(
+            serde_json::to_value(args).expect("Args serializes"),
+            serde_json::to_value(Args::cli_defaults()).expect("Args serializes"),
+        );
+    }
+
+    #[test]
+    fn the_cli_defaults_are_the_clap_defaults_not_zero_values() {
+        let args = Args::cli_defaults();
+        assert_eq!(args.max_retries, 5);
+        assert_eq!(args.chunk_size, 1000);
+        assert_eq!(args.compression, vec!["lz4".to_string()]);
+        assert!(args.multicall);
+        assert!(args.batch_state_reads);
+    }
+
+    #[test]
+    fn a_named_field_overrides_its_default_and_null_keeps_it() {
+        let args = Args::from_overrides(overrides(json!({
+            "max_retries": 9,
+            "multicall": false,
+            "blocks": ["100:200"],
+            "chunk_size": null,
+        })))
+        .expect("every key names a field");
+        assert_eq!(args.max_retries, 9);
+        assert!(!args.multicall);
+        assert_eq!(args.blocks, Some(vec!["100:200".to_string()]));
+        assert_eq!(args.chunk_size, 1000);
+    }
+
+    #[test]
+    fn an_unknown_or_private_key_is_refused() {
+        for key in ["file_suffix", "_multicall_legacy_alias"] {
+            let error = Args::from_overrides(overrides(json!({ key: true }))).unwrap_err();
+            assert!(error.to_string().contains(key), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_is_refused_and_named() {
+        let error = Args::from_overrides(overrides(json!({ "chunk_size": "big" }))).unwrap_err();
+        assert!(error.to_string().contains("'chunk_size'"), "{error}");
+    }
 }

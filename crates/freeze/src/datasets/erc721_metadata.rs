@@ -33,24 +33,11 @@ impl CollectByBlock for Erc721Metadata {
     type Response = (u32, Vec<u8>, Option<String>, Option<String>);
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        let block_number = request.ethers_block_number()?;
-        let address = request.ethers_address()?;
-
-        // A contract-level refusal becomes `None`; a node-level failure
-        // propagates so the chunk is reported as errored instead of silently
-        // written out as nulls. See `contract_read`.
-
-        // name
-        let call_data = ERC721::nameCall::SELECTOR.to_vec();
-        let name = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_string_or_bytes32(&output));
-
-        // symbol
-        let call_data = ERC721::symbolCall::SELECTOR.to_vec();
-        let symbol = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_string_or_bytes32(&output));
-
-        Ok((u32::try_from(request.block_number()?)?, request.address()?, name, symbol))
+        // The calls of the Multicall3 path below, sent one at a time. A revert,
+        // or an address with no code, becomes a null; a node that could not
+        // serve the state propagates, so the chunk is counted as errored
+        // rather than written out as nulls.
+        extract_by_eth_call::<Self>(request, source).await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

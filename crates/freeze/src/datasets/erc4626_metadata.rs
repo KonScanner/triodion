@@ -67,38 +67,11 @@ impl CollectByBlock for Erc4626Metadata {
     type Response = (u32, Vec<u8>, Option<Vec<u8>>, Option<U256>, Option<U256>);
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        let block_number = request.ethers_block_number()?;
-        let address = request.ethers_address()?;
-
-        // Each read folds a *contract-level* refusal (revert, or an address
-        // with no code) into `None`, while a *node-level* failure — pruned
-        // state on a non-archive endpoint, a rate limit, a timeout —
-        // propagates via `?`. Without that split, pointing this dataset at a
-        // non-archive RPC yields a file of nulls under a "chunks errored: 0"
-        // banner.
-
-        // asset
-        let call_data = ERC4626::assetCall {}.abi_encode();
-        let asset = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_address_word(&output));
-
-        // totalAssets
-        let call_data = ERC4626::totalAssetsCall {}.abi_encode();
-        let total_assets = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_u256_word(&output));
-
-        // totalSupply
-        let call_data = ERC4626::totalSupplyCall {}.abi_encode();
-        let total_supply = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_u256_word(&output));
-
-        Ok((
-            u32::try_from(request.block_number()?)?,
-            request.address()?,
-            asset,
-            total_assets,
-            total_supply,
-        ))
+        // The calls of the Multicall3 path below, sent one at a time. A revert,
+        // or an address with no code, becomes a null; a node that could not
+        // serve the state propagates, so the chunk is counted as errored
+        // rather than written out as nulls.
+        extract_by_eth_call::<Self>(request, source).await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -135,8 +108,6 @@ impl MulticallBatchable for Erc4626Metadata {
     fn calls_for_row(params: &Params, require_success: bool) -> R<Vec<Multicall3::Call3>> {
         let target = params.ethers_address()?;
         let allow_failure = !require_success;
-        // Same encodings as the per-call path above, so both paths send the
-        // same bytes for the same row.
         Ok(vec![
             Multicall3::Call3 {
                 target,

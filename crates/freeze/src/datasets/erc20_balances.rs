@@ -32,23 +32,11 @@ impl CollectByBlock for Erc20Balances {
     type Response = (u32, Vec<u8>, Vec<u8>, Option<U256>);
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        let signature = ERC20::balanceOfCall::SELECTOR;
-        let mut call_data = signature.clone().to_vec();
-        call_data.extend(vec![0; 12]);
-        call_data.extend(request.address()?);
-        let block_number = request.ethers_block_number()?;
-        let contract = request.ethers_contract()?;
-        // A revert, or an address with no code, means "no balance to report"
-        // and becomes a null. A node that could not serve the state propagates
-        // so the chunk is counted as errored rather than written out as nulls.
-        let output = contract_read(source.call2(contract, call_data, block_number).await)?;
-        let balance = output.and_then(|bytes| decode_u256_word(&bytes));
-        Ok((
-            u32::try_from(request.block_number()?)?,
-            request.contract()?,
-            request.address()?,
-            balance,
-        ))
+        // The calls of the Multicall3 path below, sent one at a time. A revert,
+        // or an address with no code, becomes a null; a node that could not
+        // serve the state propagates, so the chunk is counted as errored
+        // rather than written out as nulls.
+        extract_by_eth_call::<Self>(request, source).await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

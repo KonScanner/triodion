@@ -92,23 +92,11 @@ impl CollectByBlock for Erc20Allowances {
     type Response = BlockErc20OwnerSpenderAllowance;
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        let owner = request.ethers_from_address()?;
-        let spender = request.ethers_to_address()?;
-        let contract = request.ethers_contract()?;
-        let block_number = request.ethers_block_number()?;
-        let call_data = ERC20::allowanceCall { owner, spender }.abi_encode();
-        // A revert, or an address with no code, means "no allowance to report"
-        // and becomes a null. A node that could not serve the state propagates,
-        // so the chunk is counted as errored rather than written out as nulls.
-        let output = contract_read(source.call2(contract, call_data, block_number).await)?;
-        let allowance = output.and_then(|bytes| decode_u256_word(&bytes));
-        Ok((
-            u32::try_from(request.block_number()?)?,
-            request.contract()?,
-            request.from_address()?,
-            request.to_address()?,
-            allowance,
-        ))
+        // The calls of the Multicall3 path below, sent one at a time. A revert,
+        // or an address with no code, becomes a null; a node that could not
+        // serve the state propagates, so the chunk is counted as errored
+        // rather than written out as nulls.
+        extract_by_eth_call::<Self>(request, source).await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {

@@ -84,7 +84,9 @@ pub use files::{ColumnEncoding, FileFormat, FileOutput, SubDir};
 pub use queries::{Query, QueryLabels, TimeDimension};
 pub use rpc_batch::{DEFAULT_RPC_BATCH_ROWS, RpcBatchable, rpc_batch_collect_by_block};
 pub use schemas::{ColumnType, SchemaFunctions, Schemas, Table, U256Type};
-pub use sources::{Fetcher, RateLimiter, Source, SourceLabels, new_rate_limiter};
+pub use sources::{
+    Fetcher, RateLimiter, Source, SourceConfig, SourceLabels, new_rate_limiter, with_default_scheme,
+};
 pub use state_override::{
     DEFAULT_STATE_OVERRIDE_BATCH_SIZE, OverrideSupport, SCRATCH_ADDRESS, StateOverrideBatchable,
     StateReader, override_unavailable, state_override_collect_by_block,
@@ -105,7 +107,7 @@ pub use signatures::*;
 
 pub use multicall::{
     DEFAULT_MULTICALL_BATCH_SIZE, MULTICALL3_ADDRESS, Multicall3, Multicall3Info,
-    MulticallBatchable, decode_string_or_bytes32, default_collect_by_block,
+    MulticallBatchable, decode_string_or_bytes32, default_collect_by_block, extract_by_eth_call,
     multicall_collect_by_block, multicall3_info,
 };
 

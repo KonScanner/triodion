@@ -39,23 +39,11 @@ impl CollectByBlock for Erc20Supplies {
     type Response = (u32, Vec<u8>, Option<U256>);
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        // `totalSupply()` takes no arguments, so the selector is the whole
-        // calldata. This used to append the contract address; Solidity and
-        // Vyper both ignore trailing calldata so it did not corrupt results,
-        // but it meant this path and the Multicall3 path sent different bytes
-        // for the same row.
-        let call_data = ERC20::totalSupplyCall {}.abi_encode();
-        let block_number = request.ethers_block_number()?;
-        let contract = request.ethers_address()?;
-
-        // `contract_read` keeps the two failure modes apart. A revert (or an
-        // address with no code) is a real answer about the chain and becomes a
-        // null cell; a node that could not serve the state — pruned history on
-        // a non-archive endpoint, a rate limit, a timeout — propagates, so the
-        // chunk is counted as errored instead of written out as nulls.
-        let output = contract_read(source.call2(contract, call_data, block_number).await)?;
-        let total_supply = output.and_then(|bytes| decode_u256_word(&bytes));
-        Ok((u32::try_from(request.block_number()?)?, request.address()?, total_supply))
+        // The calls of the Multicall3 path below, sent one at a time. A revert,
+        // or an address with no code, becomes a null; a node that could not
+        // serve the state propagates, so the chunk is counted as errored
+        // rather than written out as nulls.
+        extract_by_eth_call::<Self>(request, source).await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -89,10 +77,7 @@ impl CollectByTransaction for Erc20Supplies {
 impl MulticallBatchable for Erc20Supplies {
     fn calls_for_row(params: &Params, require_success: bool) -> R<Vec<Multicall3::Call3>> {
         let target = params.ethers_address()?;
-        // totalSupply() takes no args; emit just the selector. (The legacy
-        // per-call path above concatenates the address to the calldata —
-        // harmless because extra calldata is ignored, but the batched path
-        // does it correctly.)
+        // totalSupply() takes no args, so the selector is the whole calldata.
         let call_data = ERC20::totalSupplyCall {}.abi_encode();
         Ok(vec![Multicall3::Call3 {
             target,
@@ -124,22 +109,11 @@ mod tests {
     /// anywhere constructed a `Source` or called a `Dataset::extract`, so
     /// nothing could observe what an extractor does when the node says no.
     fn mocked_source(asserter: Asserter) -> Arc<Source> {
-        Arc::new(Source {
-            provider: ProviderBuilder::default().connect_mocked_client(asserter),
-            chain_id: 1,
-            inner_request_size: 1,
-            max_concurrent_chunks: None,
-            rpc_url: String::new(),
-            semaphore: Arc::new(None),
-            rate_limiter: Arc::new(None),
-            labels: SourceLabels::default(),
-            l1_provider: None,
-            l1_chain_id: None,
-            l1_rpc_url: None,
-            state_override_support: Arc::new(Default::default()),
-            storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            beacon: None,
-        })
+        Arc::new(Source::from_provider(
+            ProviderBuilder::default().connect_mocked_client(asserter),
+            1,
+            &SourceConfig::new(String::new()),
+        ))
     }
 
     fn usdc_at(block: u64) -> Params {

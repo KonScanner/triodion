@@ -269,6 +269,31 @@ impl CollectError {
     }
 }
 
+/// Prefix that alloy's `RetryBackoffLayer` puts on the error it returns when
+/// it stops retrying.
+const RETRIES_EXHAUSTED: &str = "Max retries exceeded";
+
+/// Whether the node asked for less traffic.
+///
+/// A throttle reaches triodion in two shapes. A throttle that was not retried
+/// keeps its error response, which alloy classifies. A throttle that the
+/// `RetryBackoffLayer` of every [`crate::Source`] retried until it gave up
+/// arrives as a custom transport error with the text "Max retries exceeded",
+/// and the error response is gone. That layer retries only what alloy
+/// classifies as transient: rate limits, overloads (HTTP 503), a
+/// `Retry-After` answer, a missing batch response, a null response and a
+/// "header not found". None of these is caused by the size of a request, so
+/// the prefix alone identifies a request that must not be split into more
+/// requests.
+pub(crate) fn is_throttle(error: &RpcError<TransportErrorKind>) -> bool {
+    error.as_error_resp().is_some_and(|payload| payload.is_retry_err()) ||
+        matches!(
+            error,
+            RpcError::Transport(TransportErrorKind::Custom(cause))
+                if cause.to_string().starts_with(RETRIES_EXHAUSTED)
+        )
+}
+
 /// Fold a contract read into `Option`, preserving node failures as errors.
 ///
 /// This is the seam every `eth_call`-backed dataset must go through instead of
@@ -414,5 +439,39 @@ mod tests {
         let out =
             contract_read(Err::<u8, _>(error_resp(-32602, "Archive requests require a token")));
         assert!(out.is_err(), "a node failure must surface as an error, never as a null cell");
+    }
+
+    #[tokio::test]
+    async fn a_throttle_the_retry_layer_gave_up_on_is_still_a_throttle() {
+        use alloy::{
+            providers::Provider,
+            rpc::client::ClientBuilder,
+            transports::{
+                layers::RetryBackoffLayer,
+                mock::{Asserter, MockTransport},
+            },
+        };
+
+        let asserter = Asserter::new();
+        asserter.push_failure(ErrorPayload {
+            code: 429,
+            message: Cow::Borrowed("batch rate limit exceeded"),
+            data: None,
+        });
+        // No retries, so the layer gives up on the first throttle.
+        let client = ClientBuilder::default()
+            .layer(RetryBackoffLayer::new(0, 1, 1000))
+            .transport(MockTransport::new(asserter), true);
+        let provider = crate::TriodionProvider::new(client);
+
+        let error = provider.get_block_number().await.expect_err("the mock answers with a 429");
+        assert!(error.as_error_resp().is_none(), "the layer keeps the error response: {error}");
+        assert!(is_throttle(&error), "{error}");
+    }
+
+    #[test]
+    fn an_ordinary_transport_failure_is_not_a_throttle() {
+        assert!(!is_throttle(&TransportErrorKind::custom_str("connection reset by peer")));
+        assert!(!is_throttle(&TransportErrorKind::backend_gone()));
     }
 }

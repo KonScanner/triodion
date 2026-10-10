@@ -13,6 +13,8 @@
 //! - [`Multicall3Info`] + [`multicall3_info`] — per-chain (address, deploy block).
 //! - The [`MulticallBatchable`] trait + [`multicall_collect_by_block`] runner so any
 //!   `CollectByBlock` dataset can opt into batched extraction with ~30 lines.
+//! - [`extract_by_eth_call`] — the per-call path, built from the same description, for a dataset
+//!   whose per-call path has no rule of its own.
 //! - [`default_collect_by_block`] — extracted from `CollectByBlock`'s default impl so per-dataset
 //!   `collect_by_block` overrides can fall through to it when the user hasn't opted into multicall.
 //! - [`decode_string_or_bytes32`] — length-aware decoder for ERC-20 name/symbol returns; covers
@@ -225,6 +227,46 @@ where
     columns.create_dfs(&query.schemas, chain_id)
 }
 
+/// The per-call path of a [`MulticallBatchable`] dataset, built from its
+/// Multicall3 description.
+///
+/// Each call that [`MulticallBatchable::calls_for_row`] returns goes out as its
+/// own `eth_call`, in order, and the answers go through
+/// [`MulticallBatchable::decode_row`]. A dataset that uses this as its
+/// [`CollectByBlock::extract`] states each call once, so its two paths cannot
+/// send different bytes or decode the same answer differently.
+///
+/// Each answer is classified by [`crate::contract_read`]. A contract that
+/// refuses becomes `success: false` with empty `returnData`, the same shape
+/// `aggregate3` gives a failed inner call. A node that cannot answer stops the
+/// row with an error.
+///
+/// Use this only when the per-call path has no rule of its own, such as a gas
+/// cap, a call skipped for a column that is not selected, or a different
+/// decoding of an empty answer.
+///
+/// # Errors
+/// Returns `Err` for missing params, a node-level failure of any call, or an
+/// error from `decode_row`.
+pub async fn extract_by_eth_call<D: MulticallBatchable>(
+    params: Params,
+    source: Arc<Source>,
+) -> R<D::Response> {
+    let block_number = params.ethers_block_number()?;
+    let calls = D::calls_for_row(&params, false)?;
+    let mut results = Vec::with_capacity(calls.len());
+    for call in calls {
+        let output = crate::contract_read(
+            source.call2(call.target, call.callData.to_vec(), block_number).await,
+        )?;
+        results.push(Multicall3::Result {
+            success: output.is_some(),
+            returnData: output.unwrap_or_default(),
+        });
+    }
+    D::decode_row(&params, &results)
+}
+
 /// Multicall3-batched collection path for `D: MulticallBatchable`.
 ///
 /// Groups params by block, sends one `aggregate3` per `batch_size` rows
@@ -363,16 +405,17 @@ pub(crate) fn batch_may_shrink_to_fit(error: &CollectError) -> bool {
         // behaviour for these cases.
         return true
     };
+    // A throttled node wants FEWER requests. Splitting sends more. This also
+    // catches a throttle that the retry layer gave up on, which carries no
+    // error response and would otherwise count as a transport failure below.
+    if crate::types::errors::is_throttle(rpc_err) {
+        return false
+    }
     let Some(payload) = rpc_err.as_error_resp() else {
         // A transport-level failure: a dropped connection or a timeout can be
         // payload-size driven, so shrinking is a reasonable response.
         return true
     };
-
-    // A throttled node wants FEWER requests. Splitting sends more.
-    if payload.is_retry_err() {
-        return false
-    }
 
     let message = payload.message.to_ascii_lowercase();
     message.contains("too large") ||
@@ -529,5 +572,16 @@ mod tests {
     fn guards_zero_calls_per_row() {
         // Defensive: a 0 `calls_per_row` must not divide-by-zero.
         assert_eq!(rows_per_batch(250, 0), 250);
+    }
+
+    #[test]
+    fn a_throttle_the_retry_layer_gave_up_on_does_not_shrink_the_batch() {
+        // The text alloy's `RetryBackoffLayer` returns after its last retry.
+        let error = crate::CollectError::ProviderError(
+            alloy::transports::TransportErrorKind::custom_str(
+                "Max retries exceeded server returned an error response: error code 429: rate limited",
+            ),
+        );
+        assert!(!super::batch_may_shrink_to_fit(&error));
     }
 }

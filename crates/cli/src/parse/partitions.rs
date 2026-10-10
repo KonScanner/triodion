@@ -1,7 +1,7 @@
 use super::{
     blocks,
+    chunk_inputs::{ChunkUnit, parse_chunk_inputs},
     parse_utils::{hex_string_to_binary, hex_strings_to_binary, parse_binary_arg},
-    timestamps,
 };
 use crate::args::Args;
 use rand::seq::SliceRandom;
@@ -22,9 +22,11 @@ pub(crate) async fn parse_partitions(
     // TODO: map from args to dim is not exhaustive
 
     // parse chunk data
-    let (block_number_labels, block_numbers) = blocks::parse_blocks(args, source.clone()).await?;
+    let (block_number_labels, block_numbers) =
+        parse_chunk_inputs(args.blocks.as_deref(), ChunkUnit::Block, args, source.clone()).await?;
     let (block_number_labels, block_numbers) = if block_numbers.is_none() {
-        timestamps::parse_timestamps(args, source.clone()).await?
+        parse_chunk_inputs(args.timestamps.as_deref(), ChunkUnit::Timestamp, args, source.clone())
+            .await?
     } else {
         (block_number_labels, block_numbers)
     };

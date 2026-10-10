@@ -1,5 +1,6 @@
 mod args;
 mod blocks;
+mod chunk_inputs;
 mod execution;
 mod file_output;
 mod parse_utils;

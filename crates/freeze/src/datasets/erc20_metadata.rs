@@ -38,31 +38,11 @@ impl CollectByBlock for Erc20Metadata {
     type Response = (u32, Vec<u8>, Option<String>, Option<String>, Option<u32>);
 
     async fn extract(request: Params, source: Arc<Source>, _: Arc<Query>) -> R<Self::Response> {
-        let block_number = request.ethers_block_number()?;
-        let address = request.ethers_address()?;
-
-        // Each read folds a *contract-level* refusal (revert, or an address with
-        // no code) into `None`, while a *node-level* failure — pruned state on a
-        // non-archive endpoint, a rate limit, a timeout — propagates via `?`.
-        // Without that split, pointing this dataset at a non-archive RPC yields
-        // a file of nulls under a "chunks errored: 0" banner.
-
-        // name
-        let call_data = ERC20::nameCall::SELECTOR.to_vec();
-        let name = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_string_or_bytes32(&output));
-
-        // symbol
-        let call_data = ERC20::symbolCall::SELECTOR.to_vec();
-        let symbol = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| decode_string_or_bytes32(&output));
-
-        // decimals
-        let call_data = ERC20::decimalsCall::SELECTOR.to_vec();
-        let decimals = contract_read(source.call2(address, call_data, block_number).await)?
-            .and_then(|output| bytes_to_u32(output).ok());
-
-        Ok((u32::try_from(request.block_number()?)?, request.address()?, name, symbol, decimals))
+        // The calls of the Multicall3 path below, sent one at a time. A revert,
+        // or an address with no code, becomes a null; a node that could not
+        // serve the state propagates, so the chunk is counted as errored
+        // rather than written out as nulls.
+        extract_by_eth_call::<Self>(request, source).await
     }
 
     fn transform(response: Self::Response, columns: &mut Self, query: &Arc<Query>) -> R<()> {
@@ -142,5 +122,43 @@ impl MulticallBatchable for Erc20Metadata {
             None
         };
         Ok((u32::try_from(params.block_number()?)?, params.address()?, name, symbol, decimals))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{
+        providers::ProviderBuilder, rpc::json_rpc::ErrorPayload, sol_types::SolValue,
+        transports::mock::Asserter,
+    };
+    use std::borrow::Cow;
+
+    #[tokio::test]
+    async fn the_per_call_path_keeps_each_answer_in_its_own_column() {
+        let asserter = Asserter::new();
+        // name, then symbol (reverts), then decimals.
+        asserter.push_success(&Bytes::from(String::from("Token").abi_encode()));
+        asserter.push_failure(ErrorPayload {
+            code: 3,
+            message: Cow::Borrowed("execution reverted"),
+            data: None,
+        });
+        let mut decimals = [0u8; 32];
+        decimals[31] = 18;
+        asserter.push_success(&Bytes::from(decimals.to_vec()));
+        let provider = ProviderBuilder::default().connect_mocked_client(asserter);
+        let source =
+            Arc::new(Source::from_provider(provider, 1, &SourceConfig::new(String::new())));
+        let params =
+            Params { block_number: Some(1), address: Some(vec![0x11; 20]), ..Default::default() };
+
+        let (block, _, name, symbol, decimals) =
+            extract_by_eth_call::<Erc20Metadata>(params, source).await.expect("one revert is data");
+
+        assert_eq!(block, 1);
+        assert_eq!(name.as_deref(), Some("Token"));
+        assert_eq!(symbol, None, "the revert becomes a null");
+        assert_eq!(decimals, Some(18));
     }
 }

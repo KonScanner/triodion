@@ -21,7 +21,6 @@ if typing.TYPE_CHECKING:
     ]
 
     class TriodionCliArgs(TypedDict, total=False):
-        datatypes: typing.Sequence[Datatype]
         blocks: typing.Sequence[str] | None
         align: bool
         reorg_buffer: int
@@ -39,19 +38,18 @@ if typing.TYPE_CHECKING:
         chunk_size: int | None
         n_chunks: int | None
         output_dir: str | None
-        file_suffix: str | None
         overwrite: bool
         csv: bool
         json: bool
         row_group_size: int | None
         n_row_groups: int | None
         no_stats: bool
-        compression: str | None
-        contract: typing.Sequence[str | bytes | None]
-        topic0: typing.Sequence[str | bytes | None]
-        topic1: typing.Sequence[str | bytes | None]
-        topic2: typing.Sequence[str | bytes | None]
-        topic3: typing.Sequence[str | bytes | None]
+        compression: typing.Sequence[str] | None
+        contract: typing.Sequence[str] | None
+        topic0: typing.Sequence[str] | None
+        topic1: typing.Sequence[str] | None
+        topic2: typing.Sequence[str] | None
+        topic3: typing.Sequence[str] | None
         inner_request_size: int | None
         no_verbose: bool
 
@@ -77,3 +75,14 @@ if typing.TYPE_CHECKING:
         js_tracer: str | None
         verbose: bool
         event_signature: str | None
+        remember: bool
+        compute_units_per_second: int
+        multicall: bool
+        multicall_batch_size: int
+        multicall_require_success: bool
+        batch_state_reads: bool
+        batch_rpc_calls: bool
+        state_override_batch_size: int
+        l1_rpc: str | None
+        beacon_rpc: str | None
+        blob_archive: str | None

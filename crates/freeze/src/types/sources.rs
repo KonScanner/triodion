@@ -8,24 +8,28 @@ use alloy::{
         Provider, RootProvider,
         ext::{DebugApi, TraceApi},
     },
-    rpc::types::{
-        BlockTransactions, BlockTransactionsKind, Filter, Log, TransactionInput,
-        TransactionRequest,
-        state::StateOverride,
-        trace::{
-            common::TraceResult,
-            geth::{
-                AccountState, CallConfig, CallFrame, DefaultFrame, DiffMode,
-                GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
-                GethTrace, PreStateConfig, PreStateFrame,
-            },
-            parity::{
-                LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+    rpc::{
+        client::{BuiltInConnectionString, ClientBuilder, RpcClient},
+        types::{
+            BlockTransactions, BlockTransactionsKind, Filter, Log, TransactionInput,
+            TransactionRequest,
+            state::StateOverride,
+            trace::{
+                common::TraceResult,
+                geth::{
+                    AccountState, CallConfig, CallFrame, DefaultFrame, DiffMode,
+                    GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+                    GethTrace, PreStateConfig, PreStateFrame,
+                },
+                parity::{
+                    LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash,
+                    TraceType,
+                },
             },
         },
     },
     serde::WithOtherFields,
-    transports::{RpcError, TransportErrorKind, http::reqwest::Url},
+    transports::{RpcError, TransportErrorKind, layers::RetryBackoffLayer},
 };
 use governor::Quota;
 use std::num::NonZeroU32;
@@ -337,90 +341,179 @@ impl Source {
     }
 }
 
+/// Blocks per `eth_getLogs` request for [`Source::init`]. The CLI default is
+/// 1; `init` keeps the larger value it has always used.
 const DEFAULT_INNER_REQUEST_SIZE: u64 = 100;
-const DEFAULT_MAX_RETRIES: u32 = 5;
-const DEFAULT_INTIAL_BACKOFF: u64 = 5;
-const DEFAULT_MAX_CONCURRENT_CHUNKS: u64 = 4;
-const DEFAULT_MAX_CONCURRENT_REQUESTS: u64 = 100;
+
+/// Everything [`Source::connect`] needs to reach a node and pace the requests
+/// sent to it.
+///
+/// [`SourceConfig::new`] fills in the defaults of the `triodion` CLI, so a
+/// programmatic caller and a CLI run load a node the same way. For each limit,
+/// `0` means "no limit", which is the convention of the CLI flags.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceConfig {
+    /// Primary RPC endpoint: an `http(s)://` or `ws(s)://` URL, or an `.ipc`
+    /// path.
+    pub rpc_url: String,
+    /// Optional L1 (settlement) RPC, for L2 datasets that read L1-side events.
+    pub l1_rpc_url: Option<String>,
+    /// Optional consensus-layer (beacon) node.
+    pub beacon_rpc_url: Option<String>,
+    /// Optional blob archive, for blobs that a beacon node has pruned.
+    pub blob_archive_url: Option<String>,
+    /// Retries for a request that fails with a retryable error.
+    pub max_retries: u32,
+    /// Backoff before the first retry, in milliseconds.
+    pub initial_backoff: u64,
+    /// Compute units per second that the retry layer assumes the provider
+    /// allows.
+    pub compute_units_per_second: u64,
+    /// Requests in flight at the same time. `0` means no limit.
+    pub max_concurrent_requests: u64,
+    /// Chunks collected at the same time. `0` means no limit.
+    pub max_concurrent_chunks: u64,
+    /// Requests started each second. `0` means no limit.
+    pub requests_per_second: u64,
+    /// Blocks per `eth_getLogs` request.
+    pub inner_request_size: u64,
+}
+
+impl SourceConfig {
+    /// The CLI defaults for `rpc_url`, with no L1 or beacon endpoint.
+    #[must_use]
+    pub fn new(rpc_url: String) -> Self {
+        Self {
+            rpc_url,
+            l1_rpc_url: None,
+            beacon_rpc_url: None,
+            blob_archive_url: None,
+            max_retries: 5,
+            initial_backoff: 500,
+            compute_units_per_second: 50,
+            max_concurrent_requests: 100,
+            max_concurrent_chunks: 4,
+            requests_per_second: 0,
+            inner_request_size: 1,
+        }
+    }
+
+    /// The concurrency cap, or `None` for no cap.
+    ///
+    /// `0` must give `None`, not a semaphore with zero permits: that made every
+    /// `permit_request()` wait forever, and the run printed "collecting data"
+    /// and hung with no output and no error.
+    ///
+    /// The value is clamped rather than cast: `as` would wrap a very large
+    /// limit to a small one on a 32-bit target, and `Semaphore::new` panics
+    /// above `MAX_PERMITS` on every target.
+    fn semaphore(&self) -> Option<Semaphore> {
+        (self.max_concurrent_requests > 0).then(|| {
+            let permits = usize::try_from(self.max_concurrent_requests)
+                .unwrap_or(usize::MAX)
+                .min(Semaphore::MAX_PERMITS);
+            Semaphore::new(permits)
+        })
+    }
+
+    /// Connect to `url` through the retry policy of this config. `name` names
+    /// the endpoint in an error, for example "rpc" or "l1 rpc".
+    async fn connect_provider(&self, url: &str, name: &str) -> Result<TriodionProvider> {
+        let connect: BuiltInConnectionString = url
+            .parse()
+            .map_err(|e| CollectError::CollectError(format!("invalid {name} url {url:?}: {e}")))?;
+        let retry_layer = RetryBackoffLayer::new(
+            self.max_retries,
+            self.initial_backoff,
+            self.compute_units_per_second,
+        );
+        let client: RpcClient = ClientBuilder::default()
+            .layer(retry_layer)
+            .connect_with(connect)
+            .await
+            .map_err(CollectError::ProviderError)?;
+        // `AnyNetwork`, not `Ethereum`: see `crate::types::chains`. An
+        // Ethereum-typed provider cannot deserialize a block from any OP-stack
+        // or Arbitrum-stack chain.
+        Ok(TriodionProvider::new(client))
+    }
+}
 
 /// builder
 impl Source {
-    /// initialize source with default concurrency limits and no per-second rate cap.
+    /// Connect to every endpoint in `config` and build the `Source`.
     ///
-    /// See [`Source::init_with_limits`] to override `max_concurrent_requests` /
-    /// `requests_per_second` from a programmatic / Python caller.
-    pub async fn init(rpc_url: Option<String>) -> Result<Source> {
-        Self::init_with_limits(rpc_url, None, None).await
-    }
-
-    /// initialize source with explicit concurrency + rate caps.
-    ///
-    /// `max_concurrent_requests`:
-    /// * `None` → [`DEFAULT_MAX_CONCURRENT_REQUESTS`] (100) — matches the CLI default.
-    /// * `Some(0)` → no semaphore (unlimited concurrency).
-    /// * `Some(n)` for `n > 0` → semaphore with `n` permits.
-    ///
-    /// `requests_per_second`:
-    /// * `None` or `Some(0)` → no rate limiter.
-    /// * `Some(n)` for `n > 0` → `governor` direct rate limiter at `n` req/s with burst 1.
-    /// * Values above `u32::MAX` are treated as "no limit" (a saturating ceiling rather than silent
-    ///   truncation to a wrong-but-plausible u32 value).
-    ///
-    /// Both limits are honoured by [`Source`]'s internal batch helpers
-    /// (`get_transaction_receipts_batch`, `get_blocks_batch`, etc.) which
-    /// acquire a single permit for the whole batch.
+    /// This is the one construction path: the CLI, the Python module and
+    /// [`Source::init`] all come through here. Requests to the primary and L1
+    /// RPC retry with backoff. The beacon node shares the concurrency cap of
+    /// the primary RPC.
     ///
     /// # Errors
-    /// Returns [`CollectError::RPCError`] if the chain id cannot be fetched
-    /// from the configured RPC.
-    ///
-    /// # Panics
-    /// Panics on an unparseable `rpc_url` — callers should validate the URL
-    /// upstream. (TODO: move to a typed `Result` here too.)
-    pub async fn init_with_limits(
-        rpc_url: Option<String>,
-        max_concurrent_requests: Option<u64>,
-        requests_per_second: Option<u64>,
-    ) -> Result<Source> {
-        let rpc_url: String = parse_rpc_url(rpc_url)?;
-        // A malformed `--rpc` is user input, not an invariant: report it rather
-        // than aborting mid-run.
-        let parsed_rpc_url: Url = rpc_url
-            .parse()
-            .map_err(|e| CollectError::CollectError(format!("invalid rpc url {rpc_url:?}: {e}")))?;
-        let provider = TriodionProvider::new_http(parsed_rpc_url.clone());
+    /// Returns [`CollectError::CollectError`] for a URL that does not parse or
+    /// a beacon node that cannot be read, [`CollectError::ProviderError`] when
+    /// a transport cannot be built, and [`CollectError::RPCError`] when a chain
+    /// id cannot be fetched.
+    pub async fn connect(config: SourceConfig) -> Result<Source> {
+        let provider = config.connect_provider(&config.rpc_url, "rpc").await?;
         let chain_id = provider
             .get_chain_id()
             .await
             .map_err(|e| CollectError::RPCError(format!("could not get chain_id: {e}")))?;
+        let mut source = Self::from_provider(provider, chain_id, &config);
+        // Only a provider built here has the retry layer, so only here do the
+        // retry labels describe something real.
+        source.labels.max_retries = Some(config.max_retries);
+        source.labels.initial_backoff = Some(config.initial_backoff);
 
-        let max_concurrent_requests =
-            max_concurrent_requests.unwrap_or(DEFAULT_MAX_CONCURRENT_REQUESTS);
-        let semaphore = if max_concurrent_requests > 0 {
-            // `as usize` would *wrap* on 32-bit hosts (e.g. 5_000_000_000 → ~705M)
-            // — saturate instead so an overflowing request count maps to "no cap"
-            // rather than a silently-wrong small one.
-            let permits = usize::try_from(max_concurrent_requests).unwrap_or(usize::MAX);
-            Some(Semaphore::new(permits))
-        } else {
-            None
-        };
+        if let Some(url) = &config.l1_rpc_url {
+            source.attach_l1_rpc(url.clone(), &config).await?;
+        }
 
-        let rate_limiter = requests_per_second.and_then(new_rate_limiter);
+        // Connecting reads the genesis and the spec of the node, which is a
+        // round trip that no execution-only run should pay.
+        if config.beacon_rpc_url.is_some() || config.blob_archive_url.is_some() {
+            let beacon = crate::types::beacon::BeaconSource::connect(
+                config.beacon_rpc_url.clone(),
+                config.blob_archive_url.clone(),
+                source.semaphore.clone(),
+            )
+            .await?;
+            source.beacon = Some(Arc::new(beacon));
+        }
 
-        let provider = TriodionProvider::new_http(parsed_rpc_url);
+        Ok(source)
+    }
 
-        let source = Source {
+    /// Build a `Source` around a provider that is already connected.
+    ///
+    /// No request is sent, so this is the seam for tests: give it a mocked
+    /// provider. The L1 and beacon endpoints of `config` are not read here,
+    /// because attaching them needs the network; [`Source::connect`] does it.
+    #[must_use]
+    pub fn from_provider(
+        provider: TriodionProvider,
+        chain_id: u64,
+        config: &SourceConfig,
+    ) -> Source {
+        let semaphore = config.semaphore();
+        let rate_limiter = new_rate_limiter(config.requests_per_second);
+        Source {
             provider,
             chain_id,
-            inner_request_size: DEFAULT_INNER_REQUEST_SIZE,
-            max_concurrent_chunks: Some(DEFAULT_MAX_CONCURRENT_CHUNKS),
-            rpc_url,
+            inner_request_size: config.inner_request_size,
+            max_concurrent_chunks: (config.max_concurrent_chunks > 0)
+                .then_some(config.max_concurrent_chunks),
+            rpc_url: config.rpc_url.clone(),
+            // The labels report the limits that are in force, so a run that
+            // asked for `0` prints "unlimited" and a run that asked for nothing
+            // prints the default.
             labels: SourceLabels {
-                max_concurrent_requests: Some(max_concurrent_requests),
-                max_requests_per_second: requests_per_second,
-                max_retries: Some(DEFAULT_MAX_RETRIES),
-                initial_backoff: Some(DEFAULT_INTIAL_BACKOFF),
+                max_concurrent_requests: semaphore.as_ref().map(|_| config.max_concurrent_requests),
+                max_requests_per_second: rate_limiter.as_ref().map(|_| config.requests_per_second),
+                // The retry layer is part of the provider, which the caller
+                // built; `connect` sets these when it builds one.
+                max_retries: None,
+                initial_backoff: None,
             },
             rate_limiter: Arc::new(rate_limiter),
             semaphore: Arc::new(semaphore),
@@ -430,26 +523,76 @@ impl Source {
             storage_values_misses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             state_override_support: Arc::new(OverrideSupport::default()),
             beacon: None,
-        };
+        }
+    }
 
-        Ok(source)
+    /// initialize source with default concurrency limits and no per-second rate cap.
+    ///
+    /// See [`Source::init_with_limits`] to override `max_concurrent_requests` /
+    /// `requests_per_second` from a programmatic / Python caller.
+    ///
+    /// # Errors
+    /// See [`Source::init_with_limits`].
+    pub async fn init(rpc_url: Option<String>) -> Result<Source> {
+        Self::init_with_limits(rpc_url, None, None).await
+    }
+
+    /// initialize source with explicit concurrency + rate caps.
+    ///
+    /// The other settings are the defaults of [`SourceConfig::new`], except
+    /// that `inner_request_size` is 100.
+    ///
+    /// `max_concurrent_requests`:
+    /// * `None` → 100, the CLI default.
+    /// * `Some(0)` → no semaphore (unlimited concurrency).
+    /// * `Some(n)` for `n > 0` → semaphore with `n` permits.
+    ///
+    /// `requests_per_second`:
+    /// * `None` or `Some(0)` → no rate limiter.
+    /// * `Some(n)` for `n > 0` → `governor` direct rate limiter at `n` req/s with burst 1.
+    /// * Values above `u32::MAX` are treated as "no limit" (a saturating ceiling rather than silent
+    ///   truncation to a wrong-but-plausible u32 value).
+    ///
+    /// Both limits apply to each request, and to each HTTP request of a batch.
+    ///
+    /// # Errors
+    /// Returns [`CollectError::CollectError`] when no URL is given and
+    /// `ETH_RPC_URL` is unset, or the URL does not parse, and
+    /// [`CollectError::RPCError`] if the chain id cannot be fetched.
+    pub async fn init_with_limits(
+        rpc_url: Option<String>,
+        max_concurrent_requests: Option<u64>,
+        requests_per_second: Option<u64>,
+    ) -> Result<Source> {
+        let defaults = SourceConfig::new(parse_rpc_url(rpc_url)?);
+        let config = SourceConfig {
+            max_concurrent_requests: max_concurrent_requests
+                .unwrap_or(defaults.max_concurrent_requests),
+            requests_per_second: requests_per_second.unwrap_or(0),
+            inner_request_size: DEFAULT_INNER_REQUEST_SIZE,
+            ..defaults
+        };
+        Self::connect(config).await
     }
 
     /// Attach an L1 (settlement) RPC to an existing source.
     ///
-    /// Used by L2-specific datasets that need to read L1-side events. The
-    /// resulting `Source` shares its semaphore + rate limiter with the L2
-    /// path, so an aggressive L1 RPC will spend permits from the same pool.
+    /// Used by L2-specific datasets that need to read L1-side events. Requests
+    /// to the L1 RPC retry with the default policy of [`SourceConfig::new`];
+    /// set [`SourceConfig::l1_rpc_url`] and use [`Source::connect`] to choose
+    /// another policy.
     ///
     /// # Errors
     /// Returns [`CollectError::CollectError`] if `l1_rpc_url` cannot be parsed,
     /// or [`CollectError::RPCError`] if the L1 chain id cannot be fetched.
     pub async fn with_l1_rpc(mut self, l1_rpc_url: String) -> Result<Source> {
-        // `--l1-rpc` is user input; a typo must be an error, not an abort.
-        let parsed: Url = l1_rpc_url.parse().map_err(|e| {
-            CollectError::CollectError(format!("invalid l1 rpc url {l1_rpc_url:?}: {e}"))
-        })?;
-        let provider = TriodionProvider::new_http(parsed);
+        let config = SourceConfig::new(self.rpc_url.clone());
+        self.attach_l1_rpc(l1_rpc_url, &config).await?;
+        Ok(self)
+    }
+
+    async fn attach_l1_rpc(&mut self, l1_rpc_url: String, config: &SourceConfig) -> Result<()> {
+        let provider = config.connect_provider(&l1_rpc_url, "l1 rpc").await?;
         let chain_id = provider
             .get_chain_id()
             .await
@@ -457,7 +600,7 @@ impl Source {
         self.l1_provider = Some(provider);
         self.l1_chain_id = Some(chain_id);
         self.l1_rpc_url = Some(l1_rpc_url);
-        Ok(self)
+        Ok(())
     }
 
     /// Borrow the configured L1 provider, or fail with a clear message.
@@ -487,42 +630,27 @@ impl Source {
 /// `triodion_core`. The caller already returns `Result`, so the failure now
 /// travels the normal path.
 fn parse_rpc_url(rpc_url: Option<String>) -> Result<String> {
-    let mut url = match rpc_url {
+    let url = match rpc_url {
         Some(url) => url,
         None => std::env::var("ETH_RPC_URL").map_err(|_| {
             CollectError::CollectError("must provide --rpc or set ETH_RPC_URL".to_string())
         })?,
     };
-    if !url.starts_with("http") {
-        url = "http://".to_string() + url.as_str();
-    };
-    Ok(url)
+    Ok(with_default_scheme(url))
 }
 
-// builder
-
-// struct SourceBuilder {
-//     /// Shared provider for rpc data
-//     pub fetcher: Option<Arc<Fetcher<RetryClient<Http>>>>,
-//     /// chain_id of network
-//     pub chain_id: Option<u64>,
-//     /// number of blocks per log request
-//     pub inner_request_size: Option<u64>,
-//     /// Maximum chunks collected concurrently
-//     pub max_concurrent_chunks: Option<u64>,
-//     /// Rpc Url
-//     pub rpc_url: Option<String>,
-//     /// Labels (these are non-functional)
-//     pub labels: Option<SourceLabels>,
-// }
-
-// impl SourceBuilder {
-//     fn new(mut self) -> SourceBuilder {
-//     }
-
-//     fn build(self) -> Source {
-//     }
-// }
+/// Prefix `http://` to an RPC URL that names no scheme.
+///
+/// A `ws(s)://` URL and an `.ipc` path are kept as they are, because
+/// [`Source::connect`] can open both.
+#[must_use]
+pub fn with_default_scheme(url: String) -> String {
+    if url.starts_with("http") || url.starts_with("ws") || url.ends_with(".ipc") {
+        url
+    } else {
+        format!("http://{url}")
+    }
+}
 
 /// source labels (non-functional)
 #[derive(Clone, Debug, Default)]
@@ -589,7 +717,7 @@ fn batch_too_large(error: &RpcError<TransportErrorKind>) -> bool {
     }
     // A throttled node wants FEWER requests, and splitting sends more. Checked
     // before the text match because rate-limit messages mention batches too.
-    if error.as_error_resp().is_some_and(|payload| payload.is_retry_err()) {
+    if crate::types::errors::is_throttle(error) {
         return false
     }
     // Require the provider to be talking about the batch. Without this, a
@@ -837,6 +965,7 @@ impl Source {
 
     /// Get the block number
     pub async fn get_block_number(&self) -> Result<u64> {
+        let _permit = self.permit_request().await;
         Self::map_err(self.provider.get_block_number().await)
     }
 
@@ -1765,7 +1894,7 @@ fn parse_geth_diff_object(map: serde_json::Map<String, serde_json::Value>) -> Re
 /// a `429` as evidence of missing support makes the throttling worse.
 fn is_retry_error(error: &CollectError) -> bool {
     let CollectError::ProviderError(rpc_err) = error else { return false };
-    rpc_err.as_error_resp().is_some_and(|payload| payload.is_retry_err())
+    crate::types::errors::is_throttle(rpc_err)
 }
 
 #[cfg(test)]
@@ -1850,10 +1979,93 @@ mod batch_tests {
     }
 
     #[test]
+    fn a_throttle_the_retry_layer_gave_up_on_does_not_shrink_the_batch() {
+        // The text alloy's `RetryBackoffLayer` returns after its last retry. It
+        // names the batch, so only the throttle check stops the split.
+        let error = TransportErrorKind::custom_str(
+            "Max retries exceeded server returned an error response: error code 429: batch rate \
+             limit exceeded",
+        );
+        assert!(!batch_too_large(&error));
+        assert!(is_retry_error(&CollectError::ProviderError(error)));
+    }
+
+    #[test]
     fn an_unrelated_limit_does_not_shrink_the_batch() {
         // No mention of the batch: this is about one call, and retrying it in
         // smaller batches would loop without ever addressing the cause.
         assert!(!batch_too_large(&error_resp(-32000, "gas limit exceeded")));
         assert!(!batch_too_large(&error_resp(-32602, "archive requests require a personal token")));
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    use alloy::{primitives::U64, providers::ProviderBuilder, transports::mock::Asserter};
+    use futures::FutureExt;
+
+    fn mocked(asserter: Asserter, config: &SourceConfig) -> Source {
+        let provider = ProviderBuilder::default().connect_mocked_client(asserter);
+        Source::from_provider(provider, 1, config)
+    }
+
+    fn permits(source: &Source) -> Option<usize> {
+        source.semaphore.as_ref().as_ref().map(Semaphore::available_permits)
+    }
+
+    #[test]
+    fn the_defaults_are_in_force_and_the_labels_report_them() {
+        let source = mocked(Asserter::new(), &SourceConfig::new(String::new()));
+        assert_eq!(permits(&source), Some(100));
+        assert_eq!(source.labels.max_concurrent_requests, Some(100));
+        assert_eq!(source.max_concurrent_chunks, Some(4));
+        assert!(source.rate_limiter.is_none());
+        assert_eq!(source.labels.max_requests_per_second, None);
+    }
+
+    #[test]
+    fn zero_means_no_limit_for_every_cap() {
+        let config = SourceConfig {
+            max_concurrent_requests: 0,
+            max_concurrent_chunks: 0,
+            requests_per_second: 0,
+            ..SourceConfig::new(String::new())
+        };
+        let source = mocked(Asserter::new(), &config);
+        assert_eq!(permits(&source), None);
+        assert_eq!(source.labels.max_concurrent_requests, None);
+        assert_eq!(source.max_concurrent_chunks, None);
+        assert!(source.rate_limiter.is_none());
+    }
+
+    #[test]
+    fn a_rate_cap_is_built_and_labelled() {
+        let config = SourceConfig { requests_per_second: 7, ..SourceConfig::new(String::new()) };
+        let source = mocked(Asserter::new(), &config);
+        assert!(source.rate_limiter.is_some());
+        assert_eq!(source.labels.max_requests_per_second, Some(7));
+    }
+
+    #[test]
+    fn a_huge_concurrency_cap_is_clamped_rather_than_a_panic() {
+        let config =
+            SourceConfig { max_concurrent_requests: u64::MAX, ..SourceConfig::new(String::new()) };
+        assert_eq!(permits(&mocked(Asserter::new(), &config)), Some(Semaphore::MAX_PERMITS));
+    }
+
+    #[tokio::test]
+    async fn get_block_number_waits_for_a_permit() {
+        let asserter = Asserter::new();
+        asserter.push_success(&U64::from(7));
+        let config =
+            SourceConfig { max_concurrent_requests: 1, ..SourceConfig::new(String::new()) };
+        let source = mocked(asserter, &config);
+
+        let semaphore = source.semaphore.as_ref().as_ref().expect("a cap of 1 builds a semaphore");
+        let held = semaphore.acquire().await.expect("the semaphore is open");
+        assert!(source.get_block_number().now_or_never().is_none(), "the call ignored the cap");
+        drop(held);
+        assert_eq!(source.get_block_number().await.expect("the mock answers"), 7);
     }
 }

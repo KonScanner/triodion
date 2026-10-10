@@ -69,3 +69,26 @@ def test_the_synchronous_wrapper_works_inside_a_running_loop(monkeypatch, tmp_pa
 
     message = asyncio.run(main())
     assert 'must provide --rpc' in message, message
+
+
+@pytest.mark.parametrize('call', ['collect', 'freeze'])
+def test_an_unknown_keyword_is_a_type_error(call):
+    """Keywords name CLI arguments, so a name that is not one is refused.
+
+    The check happens before any endpoint is needed, as it does for a Python
+    function with a fixed signature.
+    """
+    with pytest.raises(TypeError, match='not_a_flag'):
+        getattr(triodion, call)('blocks', not_a_flag=1)
+
+
+def test_a_none_keyword_keeps_the_cli_default(monkeypatch):
+    """`None` means "use the default", so it must not fail as a wrong type.
+
+    Reaching the missing-endpoint error shows that the keywords were accepted.
+    """
+    monkeypatch.delenv('ETH_RPC_URL', raising=False)
+    monkeypatch.delenv('MESC_MODE', raising=False)
+
+    with pytest.raises(RuntimeError, match='must provide --rpc'):
+        triodion.collect('blocks', blocks=['1:2'], chunk_size=None, max_retries=None)
